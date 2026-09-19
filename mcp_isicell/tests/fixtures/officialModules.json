@@ -1,0 +1,74 @@
+{
+    "Modules": [
+        {
+            "Name": "Mass Spring Damper",
+            "DirName": "MassSpringDamper",
+            "Description": "Mass Spring Physics module",
+            "Type": "3D Physics",
+            "Dependencies": [
+                "3D"
+            ],
+            "Link": "git@gitlab.com:isicell-irit/delaunaymassspringdamper.git"
+        },
+        {
+            "Name": "Diffusion",
+            "DirName": "Diffusion",
+            "Description": "3D Diffusion module",
+            "Type": "3D Diffusion",
+            "Dependencies": [
+                "3D"
+            ],
+            "Link": "git@gitlab.com:isicell-irit/diffusion.git"
+        },
+        {
+            "Name": "Diffusion2D",
+            "DirName": "Diffusion2D",
+            "Description": "2D Diffusion module",
+            "Type": "2D Diffusion",
+            "Dependencies": [
+                "2D"
+            ],
+            "Link": "git@gitlab.com:isicell-irit/diffusion2d.git"
+        },
+        {
+            "Name": "Spheroid Manager",
+            "DirName": "SpheroidManager",
+            "Description": "Spheroid Manager module",
+            "Type": "Spheroid Manager",
+            "Dependencies": [
+                "3D"
+            ],
+            "Link": "git@gitlab.com:isicell-irit/spheroidmanager.git"
+        },
+        {
+            "Name": "Grimes Oxygen",
+            "DirName": "GrimesOxygen",
+            "Description": "Oxygen module",
+            "Type": "Diffusion",
+            "Dependencies": [
+                "Spheroid Manager"
+            ],
+            "Link": "git@gitlab.com:isicell-irit/grimesoxygen.git"
+        },
+        {
+            "Name": "2D Grid",
+            "DirName": "2DGrid",
+            "Description": "2D on-lattice module",
+            "Type": "2D Physics",
+            "Dependencies": [
+                "2D"
+            ],
+            "Link": "git@gitlab.com:isicell-irit/2dgrid.git"
+        },
+        {
+            "Name": "Hertzian Physics",
+            "DirName": "HertzianPhysics",
+            "Description": "Hertzian Physics module",
+            "Type": "3D Physics",
+            "Dependencies": [
+                "3D"
+            ],
+            "Link": "git@gitlab.com:isicell-irit/hertzianphysics.git"
+        }
+    ]
+}
