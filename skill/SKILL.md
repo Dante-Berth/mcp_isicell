@@ -216,7 +216,8 @@ simulations; a design over 2000 runs is refused.
 
 Pass `database` to `isicell_sweep_run` and it records what it found: a
 `parameters` table of the sampled points, a `condition` table when conditions
-were crossed, and one measurement table named after the catcher. Without a
+were crossed, one measurement table named after the catcher, and an `error`
+table when you also gave it reference data to score against. Without a
 database the measurements come back inline, which gets unwieldy past a few runs.
 An existing file is never replaced unless `overwrite=True`.
 
@@ -236,11 +237,26 @@ wrote with isicellpy — with:
 - `isicell_results_get(db, table, filters)` — rows, filtered structurally:
   `[{"column": "ID_PARAMETER", "op": "ge", "value": 3}]`. Not SQL.
 
-`best` and `pareto` need an `error` table. This server does not write one yet:
-scoring a run means comparing it to reference data, which needs an error
-function, and that would be caller-supplied code. Until it can be a named metric
-the loop stops at recorded measurements — read them with `isicell_results_get`
-and judge them yourself.
+`best` and `pareto` read an `error` table, which a sweep fills when you give it
+reference data. Pass `reference` (observed values per step), `column` (which
+measured column the reference describes), and `metrics` — a list of names from
+`isicell_list_metrics`:
+
+| Metric | Measures |
+|---|---|
+| `rmse` | root mean squared error over the matched steps |
+| `mae` | mean absolute error over the matched steps |
+| `mape` | mean absolute percentage error, skipping zero references |
+| `max_abs` | the largest absolute difference at any matched step |
+| `final_abs` | absolute difference at the last matched step only |
+
+There is no error *function*: a metric is a name and a reference is data, for the
+same reason a catcher is a name rather than an expression.
+
+Alignment is strict. Only steps present and numeric on both sides are compared,
+and a reference sharing no steps with the run is refused rather than scored — an
+empty intersection would otherwise rank a model that measured nothing as the
+perfect fit. So `steps` must actually include the steps the reference names.
 
 Two storage details the readers hide, and anything new must too: nested
 parameters are flattened with `$` in the table, and lists are stored as JSON

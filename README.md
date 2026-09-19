@@ -30,7 +30,8 @@ findings on every call, so a mistake surfaces where it is made.
 **Sweeps and results.** Latin hypercube sampling across points, conditions and
 replicates, previewable for free before spending any compute, recorded into a results
 database and read back through ranked scores, Pareto fronts, and parameter sets handed
-back in the shape a run takes.
+back in the shape a run takes. Give a sweep reference data and it scores each run with
+named metrics, so a calibration ends in a ranked answer rather than a pile of numbers.
 
 ## Install
 
@@ -84,9 +85,11 @@ isicell_sweep_preview(parameters=[
     {"name": "input.Cell.Common.cycleDuration", "kind": "float", "low": 10, "high": 30}
 ], n_samples=20, conditions=[{"input.Scenario.MOI": 0}, {"input.Scenario.MOI": 5}],
    replicates=3)                -> 120 runs laid out, no compute spent
-isicell_sweep_run(..., database="sweep.db", confirm=True)
-isicell_results_summarize("sweep.db")
-isicell_results_get("sweep.db", "countState", filters=[...])
+isicell_sweep_run(..., database="sweep.db",
+   reference={"0": 10, "10": 30}, column="Alive", metrics=["rmse"],
+   confirm=True)                -> every run scored against observed data
+isicell_results_best("sweep.db", "rmse", n=5)
+isicell_results_parameters("sweep.db", 3)  -> the winner, ready to re-run
 ```
 
 `CellInstantiation` and `DeadCell` are not states. They compile to `this->init()` and
@@ -126,7 +129,7 @@ throws. `E_MODULE_MISSING_ON_DISK` catches this before a build is spent on it; t
 ## Development
 
 ```sh
-uv run pytest          # 192 tests, no ISiCell needed
+uv run pytest          # 215 tests, no ISiCell needed
 uv run ruff check .
 ```
 

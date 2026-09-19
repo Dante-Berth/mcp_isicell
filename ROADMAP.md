@@ -12,8 +12,9 @@ Working notes, not a spec. Delete entries as they are done.
 | M3 build | compile via mainGenerator, errors mapped to model | done |
 | M4 run + results | generated run scripts, result readers and writer | done |
 | M5 explore | LHS sweeps across points, conditions and replicates | done |
+| M6 scoring | named metrics against a reference, ranked results | done |
 
-34 tools, 192 tests, none needing ISiCell.
+36 tools, 215 tests, none needing ISiCell.
 `uv run pytest && uv run ruff check .`
 
 ## What is deliberately not built
@@ -25,9 +26,10 @@ Working notes, not a spec. Delete entries as they are done.
 - **Raw SQL over results.** Readers take structured filters; a column is checked against
   the schema and a value is bound. If a real query turns out to be unreachable through
   them, add a named reader rather than an SQL passthrough.
-- **An error function.** Scoring is the one thing isicellpy does with caller Python that
-  this server has no answer for yet. A named metric against a reference series is the way
-  in; an expression is not.
+- **An error *function*.** Scoring is by named metric against a reference series. An
+  expression scoring a run would be flexible and would also reintroduce exactly the
+  arbitrary execution the catcher design avoids. If a real study needs a metric the set
+  lacks, add the metric.
 - **The HTTP backend.** Running on the same host removes the cookie session, the IP
   pinning that silently logs a client out when its address changes, and the
   `cookie.secure` problem over plain HTTP. If a remote topology is ever needed, the seam
@@ -35,10 +37,11 @@ Working notes, not a spec. Delete entries as they are done.
 
 ## Next, in rough order
 
-- **Scoring, as named metrics.** `isicell_results_best` and `_pareto` need an `error`
-  table, and nothing writes one. A metric -- rmse, mae -- against a reference series the
-  caller supplies as data would fill it without accepting caller Python, and would close
-  the loop from sweep to ranked answer. This is the single biggest remaining gap.
+- **Refining a sweep around a winner.** Scoring ranks points; the obvious next move is to
+  resample a narrower box around the best one and sweep again. That is a loop a caller
+  can drive today with `isicell_results_parameters` and a second `isicell_sweep_run`, so
+  the question is whether it deserves a tool of its own or stays a documented recipe.
+
 - **Background jobs.** A twelve-run sweep already blocks a tool call for as long as
   twelve simulations take. `nohup` plus a `backgroundRun.json` registry plus a per-token
   log is the shape ISiCell already uses for runs that outlive a request.
