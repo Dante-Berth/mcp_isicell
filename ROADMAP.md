@@ -13,8 +13,9 @@ Working notes, not a spec. Delete entries as they are done.
 | M4 run + results | generated run scripts, result readers and writer | done |
 | M5 explore | LHS sweeps across points, conditions and replicates | done |
 | M6 scoring | named metrics against a reference, ranked results | done |
+| M7 jobs | background sweeps, status, logs, stop | done |
 
-36 tools, 215 tests, none needing ISiCell.
+40 tools, 242 tests, none needing ISiCell.
 `uv run pytest && uv run ruff check .`
 
 ## What is deliberately not built
@@ -42,9 +43,6 @@ Working notes, not a spec. Delete entries as they are done.
   can drive today with `isicell_results_parameters` and a second `isicell_sweep_run`, so
   the question is whether it deserves a tool of its own or stays a documented recipe.
 
-- **Background jobs.** A twelve-run sweep already blocks a tool call for as long as
-  twelve simulations take. `nohup` plus a `backgroundRun.json` registry plus a per-token
-  log is the shape ISiCell already uses for runs that outlive a request.
 - **Parallel runs.** Sweeps run sequentially. `MultiSimu` parallelises over the same
   three axes, but keeps a module-global pool (`MultiSimu.py:9`) a long-lived server would
   inherit. Worth it once sweep durations justify the lifecycle work.
@@ -54,6 +52,12 @@ Working notes, not a spec. Delete entries as they are done.
   catcher.
 
 ## Watch
+
+- **A job outliving the server that started it.** The registry survives a restart and
+  reconciliation reads /proc, so a job started by a previous process is still tracked --
+  but its exit status cannot be collected, because only the parent can wait on it. Such a
+  job settles as `finished` with no exit code even if it failed. Worth revisiting if
+  restarts during long sweeps turn out to be common.
 
 - **`get_conditions()` upstream raises `NameError`** on an undefined `rawParameters`
   (`DatabaseManager.py:198`). This package does not call it; read the table through

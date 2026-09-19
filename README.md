@@ -32,6 +32,7 @@ replicates, previewable for free before spending any compute, recorded into a re
 database and read back through ranked scores, Pareto fronts, and parameter sets handed
 back in the shape a run takes. Give a sweep reference data and it scores each run with
 named metrics, so a calibration ends in a ranked answer rather than a pile of numbers.
+A long sweep runs as a background job, so the call returns immediately.
 
 ## Install
 
@@ -43,6 +44,7 @@ Point it at an ISiCell checkout to enable compiling and running:
 
 ```sh
 export ISICELL_ROOT=/path/to/ISiCell
+export ISICELL_JOBS_DIR=/path/to/jobs   # optional; background job logs
 ```
 
 Without `ISICELL_ROOT`, authoring and validation still work — that half needs nothing
@@ -129,7 +131,7 @@ throws. `E_MODULE_MISSING_ON_DISK` catches this before a build is spent on it; t
 ## Development
 
 ```sh
-uv run pytest          # 215 tests, no ISiCell needed
+uv run pytest          # 242 tests, no ISiCell needed
 uv run ruff check .
 ```
 

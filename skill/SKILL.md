@@ -212,6 +212,14 @@ three false claims.
 Runs multiply. Three points by two conditions by two replicates is twelve
 simulations; a design over 2000 runs is refused.
 
+Past a handful of runs, pass `background=True` and the sweep becomes a job: the
+call returns at once and the simulations continue without it. A background sweep
+needs a `database`, because nothing is waiting to receive measurements inline.
+Track it with `isicell_job_status` and `isicell_job_log`, stop it with
+`isicell_job_stop` (confirm required — it kills a live simulation), and query the
+database once it reports `finished`. A job that exited non-zero reads as
+`failed` and carries its exit code; that distinction is the reason to look.
+
 ### Step 9 — Record and read results
 
 Pass `database` to `isicell_sweep_run` and it records what it found: a
