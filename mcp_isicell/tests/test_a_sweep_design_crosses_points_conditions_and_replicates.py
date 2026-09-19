@@ -127,5 +127,5 @@ def test_zero_replicates_is_refused():
 def test_the_summary_says_what_will_run_before_anything_does():
     d = plan(BASE, ONE_AXIS, n_samples=5, conditions=[{"a": 1}, {"a": 2}], replicates=2, seed=3)
     s = d.summary()
-    assert s["runs"] == 20 and s["points"] == 5 and s["conditions"] == 2
+    assert s["totalRuns"] == 20 and s["totalPoints"] == 5 and s["totalConditions"] == 2
     assert s["varies"] == {"parameter": True, "condition": True, "replicate": True}

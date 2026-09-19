@@ -90,10 +90,11 @@ class Design:
         return self.replicates > 1
 
     def summary(self) -> dict[str, Any]:
+        """Counts, named so they cannot collide with the lists themselves."""
         return {
-            "runs": len(self.runs),
-            "points": len(self.points),
-            "conditions": len(self.conditions),
+            "totalRuns": len(self.runs),
+            "totalPoints": len(self.points),
+            "totalConditions": len(self.conditions),
             "replicates": self.replicates,
             "seed": self.seed,
             "varies": {

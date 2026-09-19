@@ -27,8 +27,10 @@ from .domain.models import BuilderData
 from .domain.modules import Catalogue
 from .domain.validation import validate
 from .errors import IsicellError, NotConfigured, ValidationRefused
-from .explore.sampling import Parameter, assign, bounds, sample
+from .explore.design import plan
+from .explore.sampling import Parameter
 from .results.reader import ResultsDatabase
+from .results.writer import ResultsWriter, measurement_rows
 from .session import ModelSession
 
 mcp = MCPServer("isicell")
@@ -408,6 +410,44 @@ def isicell_run_script(script_path: str, token: str | None = None) -> dict[str, 
     return _backend().run_script(use, Path(script_path).expanduser())
 
 
+def _design(
+    base_params: dict[str, Any],
+    parameters: list[dict[str, Any]] | None,
+    n_samples: int,
+    conditions: list[dict[str, Any]] | None,
+    replicates: int,
+    seed: int | None,
+):
+    space = [Parameter.from_dict(p) for p in (parameters or [])]
+    return plan(
+        base_params,
+        space,
+        n_samples=n_samples if space else 1,
+        conditions=conditions,
+        replicates=replicates,
+        seed=seed,
+    )
+
+
+def _describe_runs(design, limit: int) -> list[dict[str, Any]]:
+    """The first `limit` runs, as identity rather than full parameter dumps."""
+    out = []
+    for run in design.runs[: max(0, limit)]:
+        out.append(
+            {
+                **run.index(
+                    with_parameter=design.with_parameter,
+                    with_condition=design.with_condition,
+                    with_replicate=design.with_replicate,
+                ),
+                "point": run.point,
+                "condition": run.condition,
+                "seed": run.seed,
+            }
+        )
+    return out
+
+
 # --------------------------------------------------------------------------
 # Run
 # --------------------------------------------------------------------------
@@ -467,70 +507,131 @@ def isicell_run_simulate(
 @mcp.tool()
 @_tool
 def isicell_sweep_preview(
-    parameters: list[dict[str, Any]], n_samples: int = 10, seed: int | None = None
+    base_params: dict[str, Any] | None = None,
+    parameters: list[dict[str, Any]] | None = None,
+    n_samples: int = 10,
+    conditions: list[dict[str, Any]] | None = None,
+    replicates: int = 1,
+    seed: int | None = None,
+    show: int = 10,
 ) -> dict[str, Any]:
-    """Show the points a Latin hypercube sweep would run. Costs nothing.
+    """Show every run a sweep would perform. Costs nothing.
 
-    Each parameter is {"name": "input.Cell.Common.x", "kind": "float"|"int"|
-    "categorical", "low":, "high":, "choices":, "log":, "step":}. `name` is a
-    dotted path into the run params.
+    A sweep crosses three axes: sampled `parameters`, fixed `conditions`, and
+    `replicates` of each combination.
 
-    Latin hypercube sampling covers every axis evenly at any number of
-    dimensions, which plain random sampling stops doing as axes are added.
+    A parameter is {"name": "input.Cell.Common.x", "kind": "float"|"int"|
+    "categorical", "low":, "high":, "choices":, "log":, "step":}; `name` is a
+    dotted path into the run params. Latin hypercube sampling covers every axis
+    evenly at any number of dimensions, which plain random sampling stops doing
+    as axes are added.
+
+    A condition is a dict of dotted-path overrides applied after the sampled
+    point, so it wins when both name the same path -- a condition is the fixed
+    experimental setup, the sweep explores within it.
+
+    With a `seed` the whole design is reproducible, run for run.
     """
-    space = [Parameter.from_dict(p) for p in parameters]
-    points = sample(space, n_samples, seed=seed)
-    return {"bounds": bounds(space), "n_samples": len(points), "points": points}
+    design = _design(base_params or {}, parameters, n_samples, conditions, replicates, seed)
+    return {
+        **design.summary(),
+        "bounds": design.bounds,
+        "points": list(design.points),
+        "conditions": list(design.conditions),
+        "runs": _describe_runs(design, limit=show),
+        "runsShown": min(show, len(design.runs)),
+    }
 
 
 @mcp.tool()
 @_tool
 def isicell_sweep_run(
     base_params: dict[str, Any],
-    parameters: list[dict[str, Any]],
     steps: list[int],
+    parameters: list[dict[str, Any]] | None = None,
     n_samples: int = 10,
+    conditions: list[dict[str, Any]] | None = None,
+    replicates: int = 1,
     catcher: str = "countState",
     token: str | None = None,
     seed: int | None = None,
+    database: str | None = None,
+    overwrite: bool = False,
     confirm: bool = False,
 ) -> dict[str, Any]:
-    """Run one simulation per sampled point. Takes n_samples times a run.
+    """Run every combination of parameters, conditions and replicates.
 
     Preview with isicell_sweep_preview first. Needs confirm=True, because this
-    is the tool that spends real compute.
+    is the tool that spends real compute -- one simulation per run.
+
+    With `database`, the sweep records parameters, conditions and measurements
+    into a results file the isicell_results_* tools can then query. Without it
+    the measurements come back inline, which gets unwieldy past a few runs.
     """
     use = token or SESSION.token
     if not use:
         raise IsicellError("No build token. Compile first, or pass one explicitly.")
-    space = [Parameter.from_dict(p) for p in parameters]
-    points = sample(space, n_samples, seed=seed)
+    design = _design(base_params, parameters, n_samples, conditions, replicates, seed)
+
     if not confirm:
         return {
             "ran": False,
-            "n_samples": len(points),
-            "points": points,
-            "note": "Preview only. Pass confirm=True to run these; it costs "
-            f"{len(points)} simulations.",
+            **design.summary(),
+            "runs": _describe_runs(design, limit=10),
+            "note": f"Preview only. Pass confirm=True to run these; it costs "
+            f"{len(design.runs)} simulations.",
         }
+
+    writer = None
+    if database:
+        writer = ResultsWriter(database, overwrite=overwrite)
+        writer.write_parameters(design.points)
+        if design.with_condition:
+            writer.write_conditions(design.conditions)
+
     backend = _backend()
-    runs: list[dict[str, Any]] = []
-    for index, point in enumerate(points):
-        merged = assign(base_params, point)
-        outcome = backend.simulate(
-            use, RunSpec(params=merged, steps=steps, catcher=catcher, seed=seed)
-        )
-        measured = outcome.get("measurements") or {}
-        runs.append(
-            {
-                "index": index,
-                "point": point,
-                "ok": outcome["ok"] and measured.get("ok", False),
-                "data": measured.get("data"),
+    outcomes: list[dict[str, Any]] = []
+    recorded: list[dict[str, Any]] = []
+    failures = 0
+    try:
+        for run in design.runs:
+            index = run.index(
+                with_parameter=design.with_parameter,
+                with_condition=design.with_condition,
+                with_replicate=design.with_replicate,
+            )
+            outcome = backend.simulate(
+                use, RunSpec(params=run.params, steps=steps, catcher=catcher, seed=run.seed)
+            )
+            measured = outcome.get("measurements") or {}
+            ok = outcome["ok"] and measured.get("ok", False)
+            failures += 0 if ok else 1
+            entry = {
+                **index,
+                "seed": run.seed,
+                "ok": ok,
                 "error": measured.get("error"),
             }
-        )
-    return {"ran": True, "token": use, "n_samples": len(points), "runs": runs}
+            if writer is not None and ok:
+                recorded.extend(measurement_rows(measured.get("data"), index, seed=run.seed))
+            else:
+                entry["data"] = measured.get("data")
+            outcomes.append(entry)
+        if writer is not None:
+            writer.write_measurements(catcher.replace(":", "_"), recorded)
+    finally:
+        if writer is not None:
+            writer.close()
+
+    return {
+        "ran": True,
+        "token": use,
+        **design.summary(),
+        "failed": failures,
+        "database": database,
+        "table": catcher.replace(":", "_") if database else None,
+        "runs": outcomes,
+    }
 
 
 # --------------------------------------------------------------------------

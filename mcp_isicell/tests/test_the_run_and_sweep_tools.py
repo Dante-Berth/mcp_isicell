@@ -123,7 +123,7 @@ def test_a_sweep_preview_costs_nothing_and_shows_the_points():
         n_samples=5,
         seed=1,
     )
-    assert out["n_samples"] == 5
+    assert out["totalRuns"] == 5 and out["totalPoints"] == 5
     assert all(1 <= p["input.Cell.Common.x"] <= 2 for p in out["points"])
 
 
@@ -134,7 +134,7 @@ def test_a_sweep_does_not_run_until_it_is_confirmed(built):
         steps=[0],
         n_samples=3,
     )
-    assert out["ran"] is False and out["n_samples"] == 3
+    assert out["ran"] is False and out["totalRuns"] == 3
     assert "confirm=True" in out["note"]
 
 
@@ -150,9 +150,10 @@ def test_a_confirmed_sweep_runs_one_simulation_per_point(built):
     assert out["ran"] is True and len(out["runs"]) == 3
     assert all(r["ok"] for r in out["runs"])
     assert all(r["data"]["10"] == {"Alive": 20} for r in out["runs"])
+    assert out["failed"] == 0
 
 
-def test_each_sweep_run_records_the_point_it_used(built):
+def test_each_sweep_run_is_identified_by_the_point_it_came_from(built):
     out = server.isicell_sweep_run(
         base_params={"input": {}},
         parameters=[{"name": "input.Scenario.dt", "kind": "int", "low": 1, "high": 9}],
@@ -161,8 +162,17 @@ def test_each_sweep_run_records_the_point_it_used(built):
         seed=3,
         confirm=True,
     )
-    points = [r["point"]["input.Scenario.dt"] for r in out["runs"]]
-    assert len(set(points)) == 4  # LHS gives four distinct strata
+    assert [r["ID_PARAMETER"] for r in out["runs"]] == [0, 1, 2, 3]
+
+
+def test_a_preview_shows_the_distinct_points_a_sweep_would_use(built):
+    out = server.isicell_sweep_preview(
+        parameters=[{"name": "input.Scenario.dt", "kind": "int", "low": 1, "high": 9}],
+        n_samples=4,
+        seed=3,
+    )
+    values = [p["input.Scenario.dt"] for p in out["points"]]
+    assert len(set(values)) == 4  # LHS gives four distinct strata
 
 
 def test_a_malformed_parameter_space_is_refused():
@@ -216,3 +226,125 @@ def test_an_unknown_error_column_is_refused_and_names_the_real_ones(db):
 def test_a_missing_database_is_refused(tmp_path):
     with pytest.raises(ToolError):
         server.isicell_results_summarize(str(tmp_path / "absent.db"))
+
+
+# -- sweeps with conditions, replicates and recording ---------------------
+
+
+def test_a_sweep_crosses_conditions_and_replicates_with_the_points(built):
+    out = server.isicell_sweep_run(
+        base_params={"input": {"Cell": {"Common": {}}, "Scenario": {}}},
+        parameters=[{"name": "input.Scenario.dt", "kind": "int", "low": 1, "high": 9}],
+        n_samples=2,
+        conditions=[{"input.Scenario.MOI": 0}, {"input.Scenario.MOI": 5}],
+        replicates=2,
+        steps=[0],
+        seed=1,
+        confirm=True,
+    )
+    assert out["totalRuns"] == 8 and len(out["runs"]) == 8
+    assert all(r["ok"] for r in out["runs"])
+
+
+def test_every_run_of_a_seeded_sweep_reports_its_own_seed(built):
+    out = server.isicell_sweep_run(
+        base_params={"input": {}},
+        replicates=3,
+        steps=[0],
+        seed=42,
+        confirm=True,
+    )
+    seeds = [r["seed"] for r in out["runs"]]
+    assert len(set(seeds)) == 3 and all(isinstance(s, int) for s in seeds)
+
+
+def test_a_seeded_sweep_reruns_identically(built):
+    kwargs = dict(
+        base_params={"input": {}},
+        parameters=[{"name": "input.Scenario.dt", "kind": "int", "low": 1, "high": 100}],
+        n_samples=3,
+        steps=[0],
+        seed=99,
+        confirm=True,
+    )
+    a = server.isicell_sweep_run(**kwargs)
+    b = server.isicell_sweep_run(**kwargs)
+    assert [r["seed"] for r in a["runs"]] == [r["seed"] for r in b["runs"]]
+
+
+def test_only_the_axes_that_vary_appear_in_a_runs_identity(built):
+    """A one-point unreplicated sweep carries no ID columns at all."""
+    out = server.isicell_sweep_run(
+        base_params={"input": {}}, steps=[0], confirm=True
+    )
+    run = out["runs"][0]
+    assert "ID_PARAMETER" not in run and "ID_CONDITION" not in run
+    assert "ID_REPLICAT" not in run
+
+
+def test_a_recorded_sweep_is_readable_by_the_results_tools(built, tmp_path):
+    """The loop closes: sweep writes, the readers query what it wrote."""
+    db = str(tmp_path / "sweep.db")
+    out = server.isicell_sweep_run(
+        base_params={"input": {"Cell": {"Common": {}}, "Scenario": {}}},
+        parameters=[{"name": "input.Scenario.dt", "kind": "int", "low": 1, "high": 9}],
+        n_samples=3,
+        steps=[0, 10],
+        seed=2,
+        database=db,
+        confirm=True,
+    )
+    assert out["database"] == db and out["table"] == "countState"
+
+    summary = server.isicell_results_summarize(db)
+    assert set(summary["tables"]) == {"parameters", "countState"}
+    assert summary["tables"]["countState"]["rows"] == 6  # 3 runs x 2 steps
+
+    rows = server.isicell_results_get(
+        db, "countState", filters=[{"column": "ID_PARAMETER", "value": 0}]
+    )
+    assert [r["step"] for r in rows] == [0, 10]
+
+    # And a swept point reads back in the shape a run takes.
+    params = server.isicell_results_parameters(db, 0)
+    assert "dt" in params["input"]["Scenario"]
+
+
+def test_a_recorded_sweep_stores_the_conditions_it_crossed(built, tmp_path):
+    db = str(tmp_path / "cond.db")
+    server.isicell_sweep_run(
+        base_params={"input": {}},
+        conditions=[{"input.Scenario.MOI": 0}, {"input.Scenario.MOI": 5}],
+        steps=[0],
+        database=db,
+        confirm=True,
+    )
+    assert len(server.isicell_results_get(db, "condition")) == 2
+
+
+def test_recording_onto_an_existing_file_is_refused_by_default(built, tmp_path):
+    db = tmp_path / "taken.db"
+    db.write_text("precious")
+    with pytest.raises(ToolError) as excinfo:
+        server.isicell_sweep_run(
+            base_params={"input": {}}, steps=[0], database=str(db), confirm=True
+        )
+    assert "overwrite=True" in str(excinfo.value)
+    assert db.read_text() == "precious"
+
+
+def test_an_unrecorded_sweep_returns_its_measurements_inline(built):
+    out = server.isicell_sweep_run(
+        base_params={"input": {}}, steps=[0], confirm=True
+    )
+    assert out["runs"][0]["data"] == {"0": {"Alive": 10}}
+
+
+def test_a_design_too_large_to_mean_well_is_refused(built):
+    with pytest.raises(ToolError) as excinfo:
+        server.isicell_sweep_preview(
+            parameters=[{"name": "input.Scenario.dt", "kind": "int", "low": 1, "high": 99}],
+            n_samples=500,
+            replicates=10,
+        )
+    assert "5000 runs" in str(excinfo.value)
