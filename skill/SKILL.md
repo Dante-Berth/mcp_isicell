@@ -178,9 +178,10 @@ use `isicell_run_script`.
 
 ### Step 8 — Sweep
 
-`isicell_sweep_preview` shows the points a Latin hypercube would run and costs
-nothing. Look before you spend: `isicell_sweep_run` is one simulation per point
-and needs `confirm=True`.
+A sweep crosses three axes: sampled **parameters**, fixed **conditions**, and
+**replicates** of each combination. `isicell_sweep_preview` lays out every run
+and costs nothing; `isicell_sweep_run` needs `confirm=True` because it is one
+simulation per run.
 
 A parameter is declared as data, not as a callback:
 
@@ -190,14 +191,37 @@ A parameter is declared as data, not as a callback:
 {"name": "input.Scenario.mode", "kind": "categorical", "choices": ["a", "b"]}
 ```
 
-`name` is a dotted path into the run params. LHS covers every axis evenly however
-many axes there are, which is the property plain random sampling loses as
-dimensions grow — that is the reason to prefer it over a grid or a shotgun.
+`name` is a dotted path into the run params. LHS covers every axis evenly
+however many axes there are, which is the property plain random sampling loses
+as dimensions grow — that is the reason to prefer it over a grid or a shotgun.
 
-### Step 9 — Read results
+A **condition** is a dict of the same dotted paths: the fixed setup a sweep
+explores within, for example `{"input.Scenario.MOI": 5}`. It is applied after
+the sampled point, so a condition wins when both name the same path.
 
-A results database is written by isicellpy's `DatabaseManager` during a
-calibration run. Read it with:
+A **replicate** is the same parameters under a different seed. Pass a `seed` to
+the sweep and every run's seed is derived from it by position, so the whole
+design replays from one number and any single run can be re-run exactly. Without
+a seed the engine draws its own and the sweep is not reproducible.
+
+Index columns follow the axes that vary: `ID_PARAMETER` only when more than one
+point, `ID_CONDITION` only when conditions were given, `ID_REPLICAT` only when
+replicates exceed one. A run carrying all three when nothing varied would be
+three false claims.
+
+Runs multiply. Three points by two conditions by two replicates is twelve
+simulations; a design over 2000 runs is refused.
+
+### Step 9 — Record and read results
+
+Pass `database` to `isicell_sweep_run` and it records what it found: a
+`parameters` table of the sampled points, a `condition` table when conditions
+were crossed, and one measurement table named after the catcher. Without a
+database the measurements come back inline, which gets unwieldy past a few runs.
+An existing file is never replaced unless `overwrite=True`.
+
+Read any results database — one this server wrote, or one a calibration script
+wrote with isicellpy — with:
 
 - `isicell_results_summarize` — tables, row counts, and the error columns worth
   optimising against. Start here; it tells you what the other calls can ask for.
@@ -211,6 +235,12 @@ calibration run. Read it with:
   one call.
 - `isicell_results_get(db, table, filters)` — rows, filtered structurally:
   `[{"column": "ID_PARAMETER", "op": "ge", "value": 3}]`. Not SQL.
+
+`best` and `pareto` need an `error` table. This server does not write one yet:
+scoring a run means comparing it to reference data, which needs an error
+function, and that would be caller-supplied code. Until it can be a named metric
+the loop stops at recorded measurements — read them with `isicell_results_get`
+and judge them yourself.
 
 Two storage details the readers hide, and anything new must too: nested
 parameters are flattened with `$` in the table, and lists are stored as JSON

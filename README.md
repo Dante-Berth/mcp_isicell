@@ -27,9 +27,10 @@ findings on every call, so a mistake surfaces where it is made.
 
 **Build and run**, with compiler errors mapped back onto model elements.
 
-**Sweeps and results.** Latin hypercube sampling you can preview for free before spending
-any compute, and read-only readers over a results database — ranked scores, Pareto
-fronts, and parameter sets handed back in the shape a run takes.
+**Sweeps and results.** Latin hypercube sampling across points, conditions and
+replicates, previewable for free before spending any compute, recorded into a results
+database and read back through ranked scores, Pareto fronts, and parameter sets handed
+back in the shape a run takes.
 
 ## Install
 
@@ -81,10 +82,11 @@ Then sweep a parameter and read the results back:
 ```
 isicell_sweep_preview(parameters=[
     {"name": "input.Cell.Common.cycleDuration", "kind": "float", "low": 10, "high": 30}
-], n_samples=20)                -> the 20 points, no compute spent
-isicell_sweep_run(..., confirm=True)
-isicell_results_best(db, "rmse", n=5)
-isicell_results_pareto(db, ["rmse", "mae"])
+], n_samples=20, conditions=[{"input.Scenario.MOI": 0}, {"input.Scenario.MOI": 5}],
+   replicates=3)                -> 120 runs laid out, no compute spent
+isicell_sweep_run(..., database="sweep.db", confirm=True)
+isicell_results_summarize("sweep.db")
+isicell_results_get("sweep.db", "countState", filters=[...])
 ```
 
 `CellInstantiation` and `DeadCell` are not states. They compile to `this->init()` and
@@ -124,7 +126,7 @@ throws. `E_MODULE_MISSING_ON_DISK` catches this before a build is spent on it; t
 ## Development
 
 ```sh
-uv run pytest          # 153 tests, no ISiCell needed
+uv run pytest          # 192 tests, no ISiCell needed
 uv run ruff check .
 ```
 

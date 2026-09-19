@@ -17,8 +17,8 @@ idiom, and the validator codes. This file is about working in the repo.
 `domain/` is **pure**: no I/O, no subprocesses, no environment reads. Everything that
 touches the world is in `backend/` (subprocesses), `results/` (databases) and `config.py`
 (environment). `explore/` is pure: sampling is arithmetic, so a sweep can be previewed
-with no ISiCell at all. This is what lets 88 tests run with no ISiCell, no C++ toolchain, no
-Docker and no node.
+with no ISiCell at all. This is what lets the whole suite run with no ISiCell, no C++ toolchain,
+no Docker and no node.
 
 Authoring operations return a new model and never mutate their argument. `session.py`
 rebinds the current model. A rejected edit therefore cannot leave the session corrupt.

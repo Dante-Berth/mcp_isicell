@@ -10,10 +10,10 @@ Working notes, not a spec. Delete entries as they are done.
 | M1 offline validator | 16 rules, state graph, module deps | done |
 | M2 discovery | modules, builds, status | done |
 | M3 build | compile via mainGenerator, errors mapped to model | done |
-| M4 run + results | generated run scripts, read-only result readers | done |
-| M5 explore | LHS preview and sweeps | done |
+| M4 run + results | generated run scripts, result readers and writer | done |
+| M5 explore | LHS sweeps across points, conditions and replicates | done |
 
-34 tools, 153 tests, none needing ISiCell.
+34 tools, 192 tests, none needing ISiCell.
 `uv run pytest && uv run ruff check .`
 
 ## What is deliberately not built
@@ -25,10 +25,9 @@ Working notes, not a spec. Delete entries as they are done.
 - **Raw SQL over results.** Readers take structured filters; a column is checked against
   the schema and a value is bound. If a real query turns out to be unreachable through
   them, add a named reader rather than an SQL passthrough.
-- **`MultiSimu` and its process pool.** Sweeps run one simulation per point in sequence.
-  `MultiSimu` parallelises over params × conditions × replicates, but it keeps a
-  module-global pool (`MultiSimu.py:9`) that a long-lived server would inherit and have
-  to manage. Worth doing when sweep durations justify it; not before.
+- **An error function.** Scoring is the one thing isicellpy does with caller Python that
+  this server has no answer for yet. A named metric against a reference series is the way
+  in; an expression is not.
 - **The HTTP backend.** Running on the same host removes the cookie session, the IP
   pinning that silently logs a client out when its address changes, and the
   `cookie.secure` problem over plain HTTP. If a remote topology is ever needed, the seam
@@ -36,14 +35,16 @@ Working notes, not a spec. Delete entries as they are done.
 
 ## Next, in rough order
 
-- **Replicates and conditions in a sweep.** Today one run per point. Real calibration
-  wants n replicates per point and a condition axis, which is what the `error` and
-  `condition` tables in a results database are shaped for.
-- **Writing results.** The server reads databases it did not write. A sweep that recorded
-  into one would close the loop: sweep, score, `isicell_results_best`, re-run the winner.
-  Needs an error function, which is the same trust question as a catcher.
-- **Background jobs.** `nohup` plus a `backgroundRun.json` registry plus a per-token log
-  is the right shape for runs that outlive a tool call. Until then a long sweep blocks.
+- **Scoring, as named metrics.** `isicell_results_best` and `_pareto` need an `error`
+  table, and nothing writes one. A metric -- rmse, mae -- against a reference series the
+  caller supplies as data would fill it without accepting caller Python, and would close
+  the loop from sweep to ranked answer. This is the single biggest remaining gap.
+- **Background jobs.** A twelve-run sweep already blocks a tool call for as long as
+  twelve simulations take. `nohup` plus a `backgroundRun.json` registry plus a per-token
+  log is the shape ISiCell already uses for runs that outlive a request.
+- **Parallel runs.** Sweeps run sequentially. `MultiSimu` parallelises over the same
+  three axes, but keeps a module-global pool (`MultiSimu.py:9`) a long-lived server would
+  inherit. Worth it once sweep durations justify the lifecycle work.
 - **Optuna archives.** `OptunaDB` reads studies, trials and fitness from the same file;
   `build_params(trial_id)` replays an archived suggest function to rebuild a full
   parameter set. That replay executes archived code, so it needs the same care as a
