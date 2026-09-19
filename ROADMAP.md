@@ -48,8 +48,7 @@ Not done:
 - **The HTTP backend is not built and may never need to be.** Running on the same host
   removes the cookie session, the IP pinning that silently logs a client out when its
   address changes, and the `cookie.secure` problem over plain HTTP. If a remote topology
-  is ever needed, the seam is `backend/`, and `docs` in the git history record the full
-  API inventory.
+  is ever needed, the seam is `backend/`.
 - **`isicell_run_script` takes a path, not code.** Generating a script from a string is
   the obvious next step and the obvious way to make the trust boundary worse. Decide
   deliberately.

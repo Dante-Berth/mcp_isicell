@@ -109,7 +109,7 @@ The compile path is tested against a stub generator, so the suite needs no C++ t
 Tests that need a real checkout are marked `integration` and deselected by default.
 
 `mcp_isicell/domain/` is pure: no I/O, no subprocesses. Everything that touches the world
-lives in `backend/` and `results/`. See `skill/SKILL.md` for the modelling guide and
+lives in `backend/` and `config.py`. See `skill/SKILL.md` for the modelling guide and
 `ROADMAP.md` for what is built and what is not.
 
 ## Licence

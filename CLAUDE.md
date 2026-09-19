@@ -15,8 +15,8 @@ idiom, and the validator codes. This file is about working in the repo.
 ## Architecture
 
 `domain/` is **pure**: no I/O, no subprocesses, no environment reads. Everything that
-touches the world is in `backend/` (subprocesses), `results/` (databases) and `config.py`
-(environment). This is what lets 88 tests run with no ISiCell, no C++ toolchain, no
+touches the world is in `backend/` (subprocesses) and `config.py` (environment); the
+result readers of M4 will join them there. This is what lets 88 tests run with no ISiCell, no C++ toolchain, no
 Docker and no node.
 
 Authoring operations return a new model and never mutate their argument. `session.py`
