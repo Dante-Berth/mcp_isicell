@@ -19,13 +19,16 @@ from typing import Any
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
-from .backend.local import BUILD_TYPES, LocalBackend
+from .backend.local import BUILD_TYPES, LocalBackend, RunSpec
+from .backend.simscript import describe_catchers
 from .config import IsicellPaths
 from .domain import mutations as mut
 from .domain.models import BuilderData
 from .domain.modules import Catalogue
 from .domain.validation import validate
 from .errors import IsicellError, NotConfigured, ValidationRefused
+from .explore.sampling import Parameter, assign, bounds, sample
+from .results.reader import ResultsDatabase
 from .session import ModelSession
 
 mcp = MCPServer("isicell")
@@ -403,6 +406,197 @@ def isicell_run_script(script_path: str, token: str | None = None) -> dict[str, 
     if not use:
         raise IsicellError("No build token. Compile first, or pass one explicitly.")
     return _backend().run_script(use, Path(script_path).expanduser())
+
+
+# --------------------------------------------------------------------------
+# Run
+# --------------------------------------------------------------------------
+
+
+@mcp.tool()
+@_tool
+def isicell_list_catchers() -> list[dict[str, Any]]:
+    """The measurements a run can record, and what each returns.
+
+    A run names one of these. Arbitrary Python is deliberately not accepted, so
+    a measurement outside this set means writing a script and using
+    isicell_run_script.
+    """
+    return describe_catchers()
+
+
+@mcp.tool()
+@_tool
+def isicell_run_simulate(
+    params: dict[str, Any],
+    steps: list[int],
+    catcher: str = "countState",
+    token: str | None = None,
+    seed: int | None = None,
+) -> dict[str, Any]:
+    """Run a compiled model and record a measurement at each step.
+
+    `params` is runParams, not a model: {"input": {"Cell": {...}, "Scenario":
+    {...}}}. Cell.Common must be present -- the engine falls back to it for any
+    value a cell type does not name.
+
+    `steps` are cumulative step indices to measure at. `catcher` names a
+    measurement from isicell_list_catchers. Needs a build compiled with
+    type='python' or 'all'.
+    """
+    use = token or SESSION.token
+    if not use:
+        raise IsicellError("No build token. Compile first, or pass one explicitly.")
+    result = _backend().simulate(use, RunSpec(params=params, steps=steps, catcher=catcher, seed=seed))
+    measurements = result.get("measurements")
+    if measurements and not measurements.get("ok", True):
+        raise IsicellError(f"the simulation failed: {measurements.get('error')}")
+    return {
+        "token": use,
+        "ok": result["ok"],
+        "data": (measurements or {}).get("data"),
+        "stderr_tail": (result.get("stderr") or "").splitlines()[-20:],
+    }
+
+
+# --------------------------------------------------------------------------
+# Explore
+# --------------------------------------------------------------------------
+
+
+@mcp.tool()
+@_tool
+def isicell_sweep_preview(
+    parameters: list[dict[str, Any]], n_samples: int = 10, seed: int | None = None
+) -> dict[str, Any]:
+    """Show the points a Latin hypercube sweep would run. Costs nothing.
+
+    Each parameter is {"name": "input.Cell.Common.x", "kind": "float"|"int"|
+    "categorical", "low":, "high":, "choices":, "log":, "step":}. `name` is a
+    dotted path into the run params.
+
+    Latin hypercube sampling covers every axis evenly at any number of
+    dimensions, which plain random sampling stops doing as axes are added.
+    """
+    space = [Parameter.from_dict(p) for p in parameters]
+    points = sample(space, n_samples, seed=seed)
+    return {"bounds": bounds(space), "n_samples": len(points), "points": points}
+
+
+@mcp.tool()
+@_tool
+def isicell_sweep_run(
+    base_params: dict[str, Any],
+    parameters: list[dict[str, Any]],
+    steps: list[int],
+    n_samples: int = 10,
+    catcher: str = "countState",
+    token: str | None = None,
+    seed: int | None = None,
+    confirm: bool = False,
+) -> dict[str, Any]:
+    """Run one simulation per sampled point. Takes n_samples times a run.
+
+    Preview with isicell_sweep_preview first. Needs confirm=True, because this
+    is the tool that spends real compute.
+    """
+    use = token or SESSION.token
+    if not use:
+        raise IsicellError("No build token. Compile first, or pass one explicitly.")
+    space = [Parameter.from_dict(p) for p in parameters]
+    points = sample(space, n_samples, seed=seed)
+    if not confirm:
+        return {
+            "ran": False,
+            "n_samples": len(points),
+            "points": points,
+            "note": "Preview only. Pass confirm=True to run these; it costs "
+            f"{len(points)} simulations.",
+        }
+    backend = _backend()
+    runs: list[dict[str, Any]] = []
+    for index, point in enumerate(points):
+        merged = assign(base_params, point)
+        outcome = backend.simulate(
+            use, RunSpec(params=merged, steps=steps, catcher=catcher, seed=seed)
+        )
+        measured = outcome.get("measurements") or {}
+        runs.append(
+            {
+                "index": index,
+                "point": point,
+                "ok": outcome["ok"] and measured.get("ok", False),
+                "data": measured.get("data"),
+                "error": measured.get("error"),
+            }
+        )
+    return {"ran": True, "token": use, "n_samples": len(points), "runs": runs}
+
+
+# --------------------------------------------------------------------------
+# Results
+# --------------------------------------------------------------------------
+
+
+@mcp.tool()
+@_tool
+def isicell_results_summarize(database: str) -> dict[str, Any]:
+    """What a results database holds: tables, row counts, error and parameter names."""
+    with ResultsDatabase(database) as db:
+        return db.summarize()
+
+
+@mcp.tool()
+@_tool
+def isicell_results_get(
+    database: str,
+    table: str,
+    filters: list[dict[str, Any]] | None = None,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    """Rows of one table.
+
+    `filters` are structured, not SQL: [{"column": "ID_PARAMETER", "op": "eq",
+    "value": 3}]. Operators are eq, ne, lt, le, gt, ge. Parameter rows come back
+    nested, in the shape a run takes.
+    """
+    with ResultsDatabase(database) as db:
+        return db.get(table, filters=filters, limit=limit)
+
+
+@mcp.tool()
+@_tool
+def isicell_results_best(
+    database: str, error_name: str, n: int = 5, for_each_condition: bool = False
+) -> list[dict[str, Any]]:
+    """The parameter sets scoring lowest on one error column.
+
+    Averages the error over conditions and replicates first, which is what makes
+    two parameter sets comparable. Set for_each_condition to rank within each
+    condition instead.
+    """
+    with ResultsDatabase(database) as db:
+        return db.best(error_name, n=n, for_each_condition=for_each_condition)
+
+
+@mcp.tool()
+@_tool
+def isicell_results_pareto(database: str, error_names: list[str]) -> list[dict[str, Any]]:
+    """Parameter sets no other set beats on every error at once.
+
+    With one error this is just the minimum; with several it is the trade-off
+    front, where improving one error costs another.
+    """
+    with ResultsDatabase(database) as db:
+        return db.pareto(error_names)
+
+
+@mcp.tool()
+@_tool
+def isicell_results_parameters(database: str, id_parameter: int) -> dict[str, Any]:
+    """The nested parameter set behind an ID, ready to pass to isicell_run_simulate."""
+    with ResultsDatabase(database) as db:
+        return db.parameters_for(id_parameter)
 
 
 def main() -> None:
