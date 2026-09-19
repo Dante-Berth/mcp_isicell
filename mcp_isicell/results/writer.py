@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 from ..errors import IsicellError
-from .schema import CONDITION, PARAMETERS, flatten
+from .schema import CONDITION, ERROR, PARAMETERS, flatten
 
 # SQLite has no column type for these, and a measurement is a number or a label.
 SQL_TYPES = {int: "INTEGER", float: "REAL", bool: "INTEGER", str: "TEXT"}
@@ -112,6 +112,15 @@ class ResultsWriter:
         columns = {k: v for row in rows for k, v in row.items()}
         _create(self.conn, CONDITION, columns)
         _insert_many(self.conn, CONDITION, _align(rows, columns))
+
+    def write_errors(self, rows: Sequence[dict[str, Any]]) -> None:
+        """One scored row per run: its ID columns plus a column per metric.
+
+        This is the table isicell_results_best and _pareto read, and the reason
+        a sweep with a reference produces a ranked answer rather than a pile of
+        measurements.
+        """
+        self.write_measurements(ERROR, rows)
 
     def write_measurements(self, table: str, rows: Sequence[dict[str, Any]]) -> None:
         """Measurement rows, one per step per run.

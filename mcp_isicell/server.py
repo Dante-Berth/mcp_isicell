@@ -28,6 +28,7 @@ from .domain.modules import Catalogue
 from .domain.validation import validate
 from .errors import IsicellError, NotConfigured, ValidationRefused
 from .explore.design import plan
+from .explore.metrics import describe_metrics, score
 from .explore.sampling import Parameter
 from .results.reader import ResultsDatabase
 from .results.writer import ResultsWriter, measurement_rows
@@ -467,6 +468,18 @@ def isicell_list_catchers() -> list[dict[str, Any]]:
 
 @mcp.tool()
 @_tool
+def isicell_list_metrics() -> list[dict[str, Any]]:
+    """The metrics a sweep can score against reference data, and what each measures.
+
+    Scoring needs a metric name and a reference series, both data. An error
+    function is deliberately not accepted, for the same reason a catcher is a
+    name rather than an expression.
+    """
+    return describe_metrics()
+
+
+@mcp.tool()
+@_tool
 def isicell_run_simulate(
     params: dict[str, Any],
     steps: list[int],
@@ -557,6 +570,9 @@ def isicell_sweep_run(
     seed: int | None = None,
     database: str | None = None,
     overwrite: bool = False,
+    reference: dict[str, Any] | None = None,
+    column: str | None = None,
+    metrics: list[str] | None = None,
     confirm: bool = False,
 ) -> dict[str, Any]:
     """Run every combination of parameters, conditions and replicates.
@@ -567,6 +583,12 @@ def isicell_sweep_run(
     With `database`, the sweep records parameters, conditions and measurements
     into a results file the isicell_results_* tools can then query. Without it
     the measurements come back inline, which gets unwieldy past a few runs.
+
+    With `reference` -- observed values per step, e.g. {"0": 10, "10": 22} -- each
+    run is scored against it on `column` using the named `metrics`, and the
+    scores go into an `error` table. That is what isicell_results_best and
+    isicell_results_pareto read, so scoring is what turns a sweep into a ranked
+    answer.
     """
     use = token or SESSION.token
     if not use:
@@ -582,6 +604,17 @@ def isicell_sweep_run(
             f"{len(design.runs)} simulations.",
         }
 
+    if reference is not None and not database:
+        raise IsicellError(
+            "scoring writes an error table, so it needs a database to write into."
+        )
+    metric_names = list(metrics or ["rmse"])
+    score_column = column
+    if reference is not None and score_column is None:
+        raise IsicellError(
+            "scoring needs `column`: which measured column the reference describes."
+        )
+
     writer = None
     if database:
         writer = ResultsWriter(database, overwrite=overwrite)
@@ -592,6 +625,7 @@ def isicell_sweep_run(
     backend = _backend()
     outcomes: list[dict[str, Any]] = []
     recorded: list[dict[str, Any]] = []
+    scores: list[dict[str, Any]] = []
     failures = 0
     try:
         for run in design.runs:
@@ -616,9 +650,18 @@ def isicell_sweep_run(
                 recorded.extend(measurement_rows(measured.get("data"), index, seed=run.seed))
             else:
                 entry["data"] = measured.get("data")
+
+            if reference is not None and ok:
+                scored = score(
+                    measured.get("data") or {}, reference, score_column, metric_names
+                )
+                entry["scores"] = scored
+                scores.append({**index, **scored})
             outcomes.append(entry)
         if writer is not None:
             writer.write_measurements(catcher.replace(":", "_"), recorded)
+            if scores:
+                writer.write_errors(scores)
     finally:
         if writer is not None:
             writer.close()
@@ -630,6 +673,8 @@ def isicell_sweep_run(
         "failed": failures,
         "database": database,
         "table": catcher.replace(":", "_") if database else None,
+        "scored": len(scores),
+        "metrics": metric_names if reference is not None else None,
         "runs": outcomes,
     }
 

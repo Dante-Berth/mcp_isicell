@@ -348,3 +348,102 @@ def test_a_design_too_large_to_mean_well_is_refused(built):
             replicates=10,
         )
     assert "5000 runs" in str(excinfo.value)
+
+
+# -- scoring --------------------------------------------------------------
+
+
+def test_the_metrics_are_listed_with_what_each_measures():
+    names = {m["name"] for m in server.isicell_list_metrics()}
+    assert {"rmse", "mae"} <= names
+
+
+def test_a_scored_sweep_fills_the_error_table_that_best_reads(built, tmp_path):
+    """This is the loop closing: sweep, score, rank, re-run the winner."""
+    db = str(tmp_path / "scored.db")
+    # The stub Simu counts 10 + step, so a run measured at step 10 gives 20.
+    out = server.isicell_sweep_run(
+        base_params={"input": {"Cell": {"Common": {}}, "Scenario": {}}},
+        parameters=[{"name": "input.Scenario.dt", "kind": "int", "low": 1, "high": 9}],
+        n_samples=3,
+        steps=[0, 10],
+        seed=4,
+        database=db,
+        reference={"0": 10, "10": 20},
+        column="Alive",
+        metrics=["rmse", "mae"],
+        confirm=True,
+    )
+    assert out["scored"] == 3 and out["metrics"] == ["rmse", "mae"]
+
+    summary = server.isicell_results_summarize(db)
+    assert "error" in summary["tables"]
+    assert set(summary["errorColumns"]) >= {"rmse", "mae"}
+
+    best = server.isicell_results_best(db, "rmse", n=3)
+    assert len(best) == 3
+    # The stub ignores parameters, so every run matches the reference exactly.
+    assert all(b["score"] == pytest.approx(0.0) for b in best)
+
+
+def test_a_scored_sweep_supports_a_pareto_front_over_two_metrics(built, tmp_path):
+    db = str(tmp_path / "front.db")
+    server.isicell_sweep_run(
+        base_params={"input": {}},
+        parameters=[{"name": "input.Scenario.dt", "kind": "int", "low": 1, "high": 9}],
+        n_samples=3,
+        steps=[0, 10],
+        seed=4,
+        database=db,
+        reference={"0": 1, "10": 2},
+        column="Alive",
+        metrics=["rmse", "mae"],
+        confirm=True,
+    )
+    front = server.isicell_results_pareto(db, ["rmse", "mae"])
+    assert front  # every run ties, so none dominates and all survive
+
+
+def test_each_run_reports_its_own_scores_inline_too(built, tmp_path):
+    out = server.isicell_sweep_run(
+        base_params={"input": {}},
+        steps=[0],
+        database=str(tmp_path / "s.db"),
+        reference={"0": 5},
+        column="Alive",
+        confirm=True,
+    )
+    assert out["runs"][0]["scores"]["rmse"] == pytest.approx(5.0)
+
+
+def test_scoring_without_a_database_is_refused_with_the_reason(built):
+    with pytest.raises(ToolError) as excinfo:
+        server.isicell_sweep_run(
+            base_params={"input": {}}, steps=[0], reference={"0": 1}, column="Alive",
+            confirm=True,
+        )
+    assert "error table" in str(excinfo.value)
+
+
+def test_scoring_without_a_column_is_refused_with_the_reason(built, tmp_path):
+    with pytest.raises(ToolError) as excinfo:
+        server.isicell_sweep_run(
+            base_params={"input": {}}, steps=[0], database=str(tmp_path / "s.db"),
+            reference={"0": 1}, confirm=True,
+        )
+    assert "column" in str(excinfo.value)
+
+
+def test_a_reference_naming_steps_the_run_never_measured_is_refused(built, tmp_path):
+    with pytest.raises(ToolError) as excinfo:
+        server.isicell_sweep_run(
+            base_params={"input": {}}, steps=[0], database=str(tmp_path / "s.db"),
+            reference={"999": 1}, column="Alive", confirm=True,
+        )
+    assert "999" in str(excinfo.value)
+
+
+def test_an_unscored_sweep_leaves_no_error_table(built, tmp_path):
+    db = str(tmp_path / "plain.db")
+    server.isicell_sweep_run(base_params={"input": {}}, steps=[0], database=db, confirm=True)
+    assert "error" not in server.isicell_results_summarize(db)["tables"]
