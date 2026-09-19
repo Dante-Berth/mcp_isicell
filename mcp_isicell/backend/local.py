@@ -22,6 +22,7 @@ from random import randrange
 from ..config import IsicellPaths
 from ..domain.models import BuilderData
 from ..errors import BuildFailed, ConfirmationRequired, NotConfigured
+from .simscript import RunSpec, render
 from .streams import Progress, locate_in_model, parse_meta_info, parse_progress
 
 BUILD_TYPES = ("python", "sql", "all", "debug")
@@ -195,6 +196,27 @@ class LocalBackend:
             "stderr": proc.stderr,
         }
 
+    def simulate(self, token: str, spec: RunSpec) -> dict:
+        """Run a generated script against a build and return its measurements.
+
+        The script is written into the build directory rather than the user's
+        workspace, so a run leaves nothing behind where a person keeps files.
+        """
+        self.require()
+        validate_token(token)
+        build = self.paths.build_dir(token)
+        if not (build / "isicell" / "__init__.py").is_file():
+            raise BuildFailed(
+                f"build {token!r} has no Python module. Compile with type='python' or 'all'."
+            )
+        script = build / "_mcp_run.py"
+        script.write_text(render(spec))
+        try:
+            result = self.run_script(token, script, cwd=build)
+        finally:
+            script.unlink(missing_ok=True)
+        return {**result, "measurements": _last_json_object(result.get("stdout", ""))}
+
     def remove_build(self, token: str, confirm: bool = False) -> dict:
         validate_token(token)
         if not confirm:
@@ -206,6 +228,25 @@ class LocalBackend:
         return {"removed": True, "token": token}
 
 
+def _last_json_object(stdout: str) -> dict | None:
+    """The result line the generated script prints.
+
+    Model code writes to stdout too, so the payload is the last line that parses
+    as a JSON object, not the first and not the whole stream.
+    """
+    for line in reversed((stdout or "").splitlines()):
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            parsed = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
 def backend_from_env() -> LocalBackend | None:
     paths = IsicellPaths.from_env()
     return LocalBackend(paths) if paths else None
@@ -214,6 +255,7 @@ def backend_from_env() -> LocalBackend | None:
 __all__ = [
     "BUILD_TYPES",
     "BuildResult",
+    "RunSpec",
     "LocalBackend",
     "Progress",
     "backend_from_env",
