@@ -13,6 +13,21 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ENV_ROOT = "ISICELL_ROOT"
+ENV_JOBS = "ISICELL_JOBS_DIR"
+
+
+def jobs_directory() -> Path:
+    """Where background jobs keep their registry and logs.
+
+    Independent of ISICELL_ROOT: a job outlives the call that started it, so its
+    log must not live inside a simulation directory that a later compile with
+    the same token would delete.
+    """
+    raw = os.environ.get(ENV_JOBS)
+    if raw:
+        return Path(raw).expanduser()
+    base = os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state"
+    return Path(base).expanduser() / "mcp_isicell" / "jobs"
 
 
 @dataclass(frozen=True)

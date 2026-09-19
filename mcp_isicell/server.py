@@ -13,15 +13,18 @@ from __future__ import annotations
 
 import functools
 import json
+import os
+import time
 from pathlib import Path
 from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
+from .backend.jobs import JobStore
 from .backend.local import BUILD_TYPES, LocalBackend, RunSpec
 from .backend.simscript import describe_catchers
-from .config import IsicellPaths
+from .config import IsicellPaths, jobs_directory
 from .domain import mutations as mut
 from .domain.models import BuilderData
 from .domain.modules import Catalogue
@@ -59,6 +62,10 @@ BUNDLED_MODULES = Path(__file__).parent / "tests" / "fixtures" / "officialModule
 
 def _paths() -> IsicellPaths | None:
     return IsicellPaths.from_env()
+
+
+def _jobs() -> JobStore:
+    return JobStore(jobs_directory())
 
 
 def _backend() -> LocalBackend:
@@ -573,6 +580,7 @@ def isicell_sweep_run(
     reference: dict[str, Any] | None = None,
     column: str | None = None,
     metrics: list[str] | None = None,
+    background: bool = False,
     confirm: bool = False,
 ) -> dict[str, Any]:
     """Run every combination of parameters, conditions and replicates.
@@ -595,14 +603,40 @@ def isicell_sweep_run(
         raise IsicellError("No build token. Compile first, or pass one explicitly.")
     design = _design(base_params, parameters, n_samples, conditions, replicates, seed)
 
+    # One preview branch for both modes. It costs nothing, so it runs before any
+    # requirement the caller has not had to decide on yet.
     if not confirm:
+        where = " in the background" if background else ""
         return {
             "ran": False,
             **design.summary(),
             "runs": _describe_runs(design, limit=10),
-            "note": f"Preview only. Pass confirm=True to run these; it costs "
-            f"{len(design.runs)} simulations.",
+            "note": f"Preview only. Pass confirm=True to run these "
+            f"{len(design.runs)} simulations{where}.",
         }
+
+    if background:
+        if not database:
+            raise IsicellError(
+                "a background sweep needs a database: nothing is waiting to receive "
+                "its measurements inline."
+            )
+        return _start_background_sweep(
+            token=use,
+            base_params=base_params,
+            steps=steps,
+            parameters=parameters,
+            n_samples=n_samples,
+            conditions=conditions,
+            replicates=replicates,
+            catcher=catcher,
+            seed=seed,
+            database=database,
+            overwrite=overwrite,
+            reference=reference,
+            column=column,
+            metrics=metrics,
+        )
 
     if reference is not None and not database:
         raise IsicellError(
@@ -677,6 +711,86 @@ def isicell_sweep_run(
         "metrics": metric_names if reference is not None else None,
         "runs": outcomes,
     }
+
+
+def _start_background_sweep(**kwargs: Any) -> dict[str, Any]:
+    """Run the same sweep in a detached child of this server.
+
+    The child re-enters this module and calls the very tool that would have run
+    inline, so background and foreground sweeps cannot drift apart.
+    """
+    import shlex
+    import sys
+
+    payload = json.dumps({**kwargs, "confirm": True, "background": False})
+    script = (
+        "import json,sys;"
+        "from mcp_isicell import server;"
+        "a=json.loads(sys.argv[1]);"
+        "r=server.isicell_sweep_run(**a);"
+        "print(json.dumps({'totalRuns':r['totalRuns'],'failed':r['failed'],"
+        "'scored':r.get('scored'),'database':r.get('database')}))"
+    )
+    token = f"sweep_{int(time.time())}_{os.getpid()}"
+    store = _jobs()
+    entry = store.start(
+        token,
+        [sys.executable, "-c", script, payload],
+        cwd=Path.cwd(),
+        label=f"sweep of {kwargs.get('n_samples')} points into {kwargs.get('database')}",
+    )
+    return {
+        "ran": True,
+        "background": True,
+        "job": entry["token"],
+        "log": entry["log"],
+        "command": shlex.join(entry["command"][:2]) + " ...",
+        "note": "Started. Poll with isicell_job_status, read isicell_job_log, "
+        "and query the database once it finishes.",
+    }
+
+
+# --------------------------------------------------------------------------
+# Jobs
+# --------------------------------------------------------------------------
+
+
+@mcp.tool()
+@_tool
+def isicell_job_list() -> list[dict[str, Any]]:
+    """Background jobs, newest first, with their status reconciled."""
+    return _jobs().list()
+
+
+@mcp.tool()
+@_tool
+def isicell_job_status(job: str) -> dict[str, Any]:
+    """One job: whether it is running, finished, failed or interrupted.
+
+    A job that exited non-zero reads as failed and carries its exit code.
+    """
+    return _jobs().status(job)
+
+
+@mcp.tool()
+@_tool
+def isicell_job_log(job: str, tail: int = 100) -> dict[str, Any]:
+    """The tail of a job's output. stdout and stderr share one log."""
+    return _jobs().log(job, tail=tail)
+
+
+@mcp.tool()
+@_tool
+def isicell_job_stop(job: str, confirm: bool = False) -> dict[str, Any]:
+    """Stop a running job. Needs confirm=True; it kills a live simulation."""
+    return _jobs().stop(job, confirm=confirm)
+
+
+@mcp.tool()
+@_tool
+def isicell_job_forget(job: str, confirm: bool = False) -> dict[str, Any]:
+    """Drop a finished job from the registry and delete its log."""
+    return _jobs().forget(job, confirm=confirm)
 
 
 # --------------------------------------------------------------------------

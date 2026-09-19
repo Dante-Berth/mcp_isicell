@@ -447,3 +447,104 @@ def test_an_unscored_sweep_leaves_no_error_table(built, tmp_path):
     db = str(tmp_path / "plain.db")
     server.isicell_sweep_run(base_params={"input": {}}, steps=[0], database=db, confirm=True)
     assert "error" not in server.isicell_results_summarize(db)["tables"]
+
+
+# -- background sweeps ----------------------------------------------------
+
+
+def _await_job(job: str, timeout: float = 60.0) -> dict:
+    import time as _time
+
+    deadline = _time.time() + timeout
+    while _time.time() < deadline:
+        entry = server.isicell_job_status(job)
+        if entry["status"] != "running":
+            return entry
+        _time.sleep(0.05)
+    raise AssertionError(f"background job {job} never finished")
+
+
+@pytest.fixture
+def job_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv("ISICELL_JOBS_DIR", str(tmp_path / "jobs"))
+    yield tmp_path / "jobs"
+
+
+def test_a_background_sweep_returns_at_once_and_finishes_later(built, tmp_path, job_dir):
+    """The whole point: the call returns before the simulations do."""
+    db = str(tmp_path / "bg.db")
+    out = server.isicell_sweep_run(
+        base_params={"input": {"Cell": {"Common": {}}, "Scenario": {}}},
+        parameters=[{"name": "input.Scenario.dt", "kind": "int", "low": 1, "high": 9}],
+        n_samples=3,
+        steps=[0, 10],
+        seed=1,
+        database=db,
+        background=True,
+        confirm=True,
+    )
+    assert out["background"] is True and out["job"]
+
+    entry = _await_job(out["job"])
+    assert entry["status"] == "finished", server.isicell_job_log(out["job"])["lines"]
+
+    # And the database the child wrote is readable through the usual tools.
+    summary = server.isicell_results_summarize(db)
+    assert summary["tables"]["countState"]["rows"] == 6
+
+
+def test_a_background_sweep_is_previewed_before_it_is_confirmed(built, tmp_path, job_dir):
+    out = server.isicell_sweep_run(
+        base_params={"input": {}},
+        steps=[0],
+        database=str(tmp_path / "x.db"),
+        background=True,
+    )
+    assert out["ran"] is False and "background" in out["note"]
+    assert server.isicell_job_list() == []
+
+
+def test_a_background_sweep_without_a_database_is_refused(built, job_dir):
+    """Nothing is waiting to receive measurements inline, so they would be lost."""
+    with pytest.raises(ToolError) as excinfo:
+        server.isicell_sweep_run(
+            base_params={"input": {}}, steps=[0], background=True, confirm=True
+        )
+    assert "database" in str(excinfo.value)
+
+
+def test_a_finished_background_job_appears_in_the_listing(built, tmp_path, job_dir):
+    out = server.isicell_sweep_run(
+        base_params={"input": {}},
+        steps=[0],
+        database=str(tmp_path / "l.db"),
+        background=True,
+        confirm=True,
+    )
+    _await_job(out["job"])
+    assert [j["token"] for j in server.isicell_job_list()] == [out["job"]]
+
+
+def test_a_background_job_log_carries_what_the_sweep_reported(built, tmp_path, job_dir):
+    out = server.isicell_sweep_run(
+        base_params={"input": {}},
+        steps=[0],
+        database=str(tmp_path / "log.db"),
+        background=True,
+        confirm=True,
+    )
+    _await_job(out["job"])
+    assert any("totalRuns" in line for line in server.isicell_job_log(out["job"])["lines"])
+
+
+def test_a_background_sweep_that_fails_reads_as_failed(built, tmp_path, job_dir):
+    """An unwritable database path makes the child exit non-zero."""
+    out = server.isicell_sweep_run(
+        base_params={"input": {}},
+        steps=[0],
+        database="/proc/cannot/write/here.db",
+        background=True,
+        confirm=True,
+    )
+    entry = _await_job(out["job"])
+    assert entry["status"] == "failed" and entry["exit_code"] != 0
