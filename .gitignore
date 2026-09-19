@@ -1,0 +1,16 @@
+# The upstream ISiCell snapshot. It is reference material, not source: a 4.9 MB
+# third-party blob whose cellModules/* submodule dirs are empty anyway. Keep it
+# locally, fetch the real thing with `git submodule update --init --recursive`.
+isicell-main.zip
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/

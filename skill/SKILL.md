@@ -1,0 +1,226 @@
+---
+name: isicell-modeling
+description: Author, validate, compile and run ISiCell agent-based cell biology models through the mcp_isicell server. Covers the builderData schema, the state-machine idiom, the validator codes, and the generate-compile-run loop. Invoke when building or debugging an ISiCell model, or when a compile fails and the error must be traced back to the model.
+---
+
+# isicell-modeling
+
+ISiCell is a platform for agent-based cell biology models. A model is a **state
+machine per cell**: each state carries C++ behaviour code, and transitions carry
+C++ boolean conditions. The platform splices that into C++ templates, compiles
+with CMake, and runs the simulation.
+
+The web UI is not privileged. The whole pipeline is
+`scripts/mainGenerator.py <token> <type>` reading the model JSON **on stdin**.
+Anything that can emit valid `builderData` can drive ISiCell. That is what this
+server does.
+
+## 1. The two JSON documents — do not conflate them
+
+| | **builderData** (`finalJson`) | **runParams** |
+|---|---|---|
+| Is | the model *definition* | *values* for one run |
+| Goes to | `mainGenerator.py` on stdin | `Simu(params)` / `console <f.json>` |
+| Produces | C++ → `make` → `console` + `_isiCellPy.so` | one execution |
+
+Compiling is expensive (minutes) and defines *structure*. Running is cheap and
+supplies *numbers*. If a change only moves a number, you do not recompile — that
+is what `paramInputs` is for. Check `isicell_build_checksum` before rebuilding.
+
+Two token namespaces, and they are different things:
+
+- `sim_*` — a built project directory under `simulations/`.
+- `web*` — one execution of it, and the PostgreSQL table prefix.
+
+## 2. The builderData schema
+
+```
+moduleSelected            [str]    official module Names (not DirNames)
+customModule              {name: {file: {code, type}}}
+enums                     {name: [values]}
+cellTypes                 [str]    empty => enum Type { Common }
+scenario
+  attributes              [{type, value, source}]
+  codeInit, codeLoop      C++ run once / every step
+  functions               {idFunc: {code}}
+cell
+  attributes              [{type, value, source}]
+  initializationCode      C++ run at cell birth
+  initializationTransitions  [{from: "CellInstantiation", destinations: [...]}]
+  States                  [{name, code}]
+  Transitions             [{from, destinations: [{to, condition}]}]
+  functions               {idFunc: {code}}
+paramInputs               {Cell: [{type,value}], Scenario: [{type,value}]}
+CellAttributesRecorded    [{type,value}]   -> becomes a Postgres column
+CellFunctionsRecorded     [{type,value}]
+```
+
+`source: 'core'` attributes are skipped in codegen — they describe what the
+engine already provides. Only `'user'` attributes are emitted.
+
+An attribute reaches `paramInputs` or `CellAttributesRecorded` by being *tagged*
+in the UI (`MODEL`, `VIEWER`). Through this server, set them explicitly with
+`isicell_model_set_param_inputs`.
+
+## 3. The two magic state names
+
+`CellInstantiation` and `DeadCell` are not ordinary states. They compile to
+method calls, not to `State::` values (`core/src/cells/PrimoCell.hpp:29-32`):
+
+- `to: "CellInstantiation"` → `this->init()` — re-initialise the cell
+- `to: "DeadCell"` → `this->die()` — remove it from the world
+
+So every model needs at least one transition to `DeadCell`, or cells never die,
+and at least one `initializationTransitions` entry, or a newborn cell never
+enters a real state. The UI spells them `"Cell Instantiation"` and `"Dead Cell"`
+and normalises the spaces away; emit them without spaces.
+
+**Never declare a state named `CellInstantiation` or `DeadCell`.** It generates
+a duplicate `case` and the build fails on generated source you did not write.
+
+## 4. Transition conditions are ordered, and the order is rewritten
+
+`buildConditionsCode` (`PrimoCell.hpp:15-39`) sorts a state's destinations so
+that **unconditional ones go last**, then emits `if / else if / else`. Two
+consequences:
+
+- You do not need to order destinations yourself; put the fallback anywhere.
+- **Two unconditional destinations from one state means the second is dead
+  code.** The validator reports `W_UNORDERED_CONDITIONS`. It compiles, and it
+  silently never fires — the worst failure mode there is.
+
+A condition is a C++ boolean expression evaluated on the cell. Helpers available
+to it: `isType(t)`, `isInContactWith(t)`, `countNeighborType(t)`, `isInContact()`,
+`getId()`, `getMotherId()`, `getRadius()`, `getParametersFrom(type)`.
+
+## 5. Step-by-step — the authoring loop
+
+### Step 1 — Start a model
+
+`isicell_model_new`, or `isicell_model_load` from a demo. The model is held in
+the session; authoring tools mutate it and return fresh findings. Do not pass the
+whole model on every call — `isicell_model_export` when you want it out.
+
+### Step 2 — Declare structure before code
+
+States, cell types and enums first; then attributes; then behaviour code. Writing
+C++ against attributes that do not exist yet produces compile errors in generated
+source, which are much harder to read than a validator finding.
+
+### Step 3 — Select modules, and respect the dependency kinds
+
+`isicell_model_select_module` takes the module **`Name`** (`"Diffusion2D"`,
+`"Mass Spring Damper"`), not the `DirName`. Dependencies come in two kinds and
+both are checked:
+
+- a module `Type`, e.g. Grimes Oxygen depends on `"Spheroid Manager"`
+- a dimensionality pseudo-capability, `"2D"` or `"3D"`
+
+A 2D and a 3D physics module together is `E_SPACE_DIM_CONFLICT`. It is not a
+warning; the generated world cannot be both.
+
+### Step 4 — Validate before you spend a compile
+
+`isicell_model_validate`. Fix every `error`. Read every `warning` — the two that
+matter most are `W_UNREACHABLE_STATE` (you wrote behaviour that can never run)
+and `W_UNORDERED_CONDITIONS` (above).
+
+`isicell_build_compile` refuses a model with error-level findings unless
+`force=True`. Do not reach for `force` to make a finding go away; it exists for
+the case where you know the validator is wrong, and then say so.
+
+### Step 5 — Compile
+
+`isicell_build_compile(type=...)`, where type selects what gets built:
+
+| type | SWIG/Python | SQL | Use for |
+|---|---|---|---|
+| `python` | yes | no | driving from Python — the usual choice |
+| `sql` | no | yes | the `console` binary writing to Postgres |
+| `all` | yes | yes | both |
+| `debug` | no | yes | `-DDEBUG=ON`, runs under GDB |
+
+**Reusing a token destroys that build.** `mainGenerator.py:66` does
+`shutil.rmtree(simPath)` before regenerating. The tool requires `confirm=True`
+when the token already exists. Omit `token` to get a fresh one.
+
+### Step 6 — Read a compile failure back onto the model
+
+The generator prints `metaInfo:` JSON to stderr mapping generated C++ lines to
+model elements. The server surfaces it as `meta_info`, so a `g++` error at
+`PrimoCell.hpp:212` is reported as *the function `divide` in the cell*. Report
+the model location, never the generated line — the generated file is rewritten
+on every build and the line number is worthless to the user.
+
+### Step 7 — Run
+
+`isicell_run_simulate(token, params, steps, catcher)` runs against the SWIG
+module. `params` is **runParams**, not builderData:
+
+```
+{"input": {"Cell": {"Common": {...}}, "Scenario": {"dt": 360, "maxStep": 1000}}}
+```
+
+`Cell.Common` must always be present — `Model.hpp:52` falls back to it for any
+cell type that does not name a value, and its absence throws
+`problem with cell paramter "<name>", for cell type "<type>"` at load.
+
+`dt` is in **seconds**; the default 360 is six minutes of simulated time.
+`maxStep` bounds the run.
+
+### Step 8 — Sweep and read results
+
+`isicell_explore_sweep` for LHS or linspace over named ranges. Results land in
+SQLite; query them with `isicell_results_best`, `isicell_results_pareto`,
+`isicell_results_query`. Filters are SQL `WHERE` fragments with dotted names:
+`"error.rmse < 0.1 AND parameters.Cell.Common.cycleDuration > 10"`.
+
+## 6. Validator codes
+
+| Code | Meaning |
+|---|---|
+| `E_NO_STATES` | no states — `enum State {}` is not valid C++ |
+| `E_TRANSITION_UNDEFINED_TARGET` | `to` is not a declared state or a magic name |
+| `E_TRANSITION_UNDEFINED_SOURCE` | `from` is not a declared state |
+| `E_DUPLICATE_STATE` | two states share a name |
+| `E_NO_INIT_TRANSITION` | nothing leaves `CellInstantiation` |
+| `E_FUNC_NO_NAME` | function code has no parseable `name(` — crashes codegen |
+| `E_UNKNOWN_MODULE` | not in `officialModules.json` |
+| `E_MODULE_MISSING_ON_DISK` | module selected but its `config.json` is absent |
+| `E_MODULE_DEPS` | unmet dependency |
+| `E_SPACE_DIM_CONFLICT` | 2D and 3D modules together |
+| `E_BAD_IDENTIFIER` | name is not a valid C++ identifier |
+| `E_RECORDED_ATTR_TYPE` | recorded attribute type has no SQL mapping |
+| `W_UNREACHABLE_STATE` | not reachable from `CellInstantiation` |
+| `W_DEAD_END_STATE` | no way out, and not `DeadCell` |
+| `W_UNORDERED_CONDITIONS` | second unconditional destination is dead code |
+| `W_NO_COMMON_CELL_TYPE` | run params will need a `Cell.Common` block |
+
+## 7. Known upstream breakage
+
+- **Empty submodules.** In a zip export of ISiCell, every
+  `core/modules/cellModules/*` is empty. Selecting an official module then fails
+  at `mainGenerator.py:86` with `FileNotFoundError`, and `/api/defaultJson`
+  throws. Fix is `git submodule update --init --recursive` on the ISiCell
+  checkout. `E_MODULE_MISSING_ON_DISK` catches this before the compile.
+- **`DatabaseManager.get_conditions()` raises `NameError`** — it references an
+  undefined `rawParameters` (`DatabaseManager.py:188-203`). Use
+  `get('condition', ...)`.
+- **`MultiSimu` keeps a module-global process pool** (`MultiSimu.py:9`) reused
+  across instances. A long-lived server must not assume it is clean.
+
+## 8. Engineering standard
+
+- The validator is the product. When a build fails for a reason the validator
+  could have caught, add the rule and the test — do not just fix the model.
+- Keep `domain/` pure. Subprocesses and files belong in `backend/` and `results/`.
+- Test names state the invariant:
+  `test_validator_flags_second_unconditional_destination_as_dead_branch`, not
+  `test_validate_3`.
+- Compiling and running execute arbitrary C++ and Python as the invoking user.
+  The `confirm` flags are ergonomics against accidents, **not a security
+  control** — real gating is the MCP host's permission prompts. Say so rather
+  than implying otherwise.
+- Never echo the `main` block of a runParams file back to a caller; it carries
+  the database password.
+- Do not add tools beyond what was asked.
