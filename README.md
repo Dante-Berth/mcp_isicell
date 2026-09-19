@@ -27,6 +27,10 @@ findings on every call, so a mistake surfaces where it is made.
 
 **Build and run**, with compiler errors mapped back onto model elements.
 
+**Sweeps and results.** Latin hypercube sampling you can preview for free before spending
+any compute, and read-only readers over a results database — ranked scores, Pareto
+fronts, and parameter sets handed back in the shape a run takes.
+
 ## Install
 
 ```sh
@@ -68,6 +72,19 @@ isicell_model_add_transition("Quiescent", "Proliferating", "countNeighborType(Co
 isicell_model_add_transition("Proliferating", "DeadCell", "getRadius() > 10")
 isicell_model_validate()        -> ok
 isicell_build_compile("python") -> sim_2026919_2148_417
+isicell_run_simulate(params={...}, steps=[0,100,200], catcher="countState")
+                                -> {"0": {"Proliferating": 10}, ...}
+```
+
+Then sweep a parameter and read the results back:
+
+```
+isicell_sweep_preview(parameters=[
+    {"name": "input.Cell.Common.cycleDuration", "kind": "float", "low": 10, "high": 30}
+], n_samples=20)                -> the 20 points, no compute spent
+isicell_sweep_run(..., confirm=True)
+isicell_results_best(db, "rmse", n=5)
+isicell_results_pareto(db, ["rmse", "mae"])
 ```
 
 `CellInstantiation` and `DeadCell` are not states. They compile to `this->init()` and
@@ -81,10 +98,16 @@ running this server**. That is what ISiCell is: the model *is* code. The platfor
 `exec()`s template snippets during codegen and user-supplied Python during parameter
 sweeps.
 
-The `confirm` flags on destructive tools guard against accidents — a token reuse silently
-deleting a previous build — and are **not a security control**. An LLM can set them
-itself. Real gating is the MCP host's permission prompts. Run this against instances and
-models you trust.
+The `confirm` flags on destructive and expensive tools guard against accidents — a token
+reuse silently deleting a previous build, a sweep spending twenty simulations — and are
+**not a security control**. An LLM can set them itself. Real gating is the MCP host's
+permission prompts. Run this against instances and models you trust.
+
+Two boundaries are held deliberately rather than by a flag. A run names a measurement
+from a fixed set instead of accepting a Python expression, and every value crosses into
+the generated script as JSON. Result readers take structured filters instead of SQL, over
+a read-only connection. Neither is a claim that the server is a sandbox — compiling
+already runs your C++ — but neither adds a new way in.
 
 The server never echoes the `main` block of a run-params file, which carries the database
 password.
@@ -101,15 +124,16 @@ throws. `E_MODULE_MISSING_ON_DISK` catches this before a build is spent on it; t
 ## Development
 
 ```sh
-uv run pytest          # 88 tests, no ISiCell needed
+uv run pytest          # 153 tests, no ISiCell needed
 uv run ruff check .
 ```
 
-The compile path is tested against a stub generator, so the suite needs no C++ toolchain.
+The compile path is tested against a stub generator and the run path against a fake build
+with a stub `Simu`, so the suite needs no C++ toolchain and no SWIG.
 Tests that need a real checkout are marked `integration` and deselected by default.
 
 `mcp_isicell/domain/` is pure: no I/O, no subprocesses. Everything that touches the world
-lives in `backend/` and `config.py`. See `skill/SKILL.md` for the modelling guide and
+lives in `backend/`, `results/` and `config.py`. See `skill/SKILL.md` for the modelling guide and
 `ROADMAP.md` for what is built and what is not.
 
 ## Licence

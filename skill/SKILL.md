@@ -154,8 +154,8 @@ on every build and the line number is worthless to the user.
 
 ### Step 7 — Run
 
-`isicell_run_simulate(token, params, steps, catcher)` runs against the SWIG
-module. `params` is **runParams**, not builderData:
+`isicell_run_simulate(params, steps, catcher)` runs against the SWIG module, so
+the build must be `python` or `all`. `params` is **runParams**, not builderData:
 
 ```
 {"input": {"Cell": {"Common": {...}}, "Scenario": {"dt": 360, "maxStep": 1000}}}
@@ -166,14 +166,55 @@ cell type that does not name a value, and its absence throws
 `problem with cell paramter "<name>", for cell type "<type>"` at load.
 
 `dt` is in **seconds**; the default 360 is six minutes of simulated time.
-`maxStep` bounds the run.
+`steps` are cumulative step indices to measure at, and the run only ever
+advances forwards.
 
-### Step 8 — Sweep and read results
+`catcher` names a measurement — `isicell_list_catchers` gives the set, and
+`attribute:<name>` reads one recorded attribute. **Arbitrary Python is not
+accepted**, deliberately: compiling already runs your C++, and a catcher that
+took an expression would add remote code execution as a feature rather than a
+consequence. When a measurement is genuinely outside the set, write a script and
+use `isicell_run_script`.
 
-`isicell_explore_sweep` for LHS or linspace over named ranges. Results land in
-SQLite; query them with `isicell_results_best`, `isicell_results_pareto`,
-`isicell_results_query`. Filters are SQL `WHERE` fragments with dotted names:
-`"error.rmse < 0.1 AND parameters.Cell.Common.cycleDuration > 10"`.
+### Step 8 — Sweep
+
+`isicell_sweep_preview` shows the points a Latin hypercube would run and costs
+nothing. Look before you spend: `isicell_sweep_run` is one simulation per point
+and needs `confirm=True`.
+
+A parameter is declared as data, not as a callback:
+
+```
+{"name": "input.Cell.Common.cycleDuration", "kind": "float", "low": 10, "high": 30}
+{"name": "input.Scenario.seedCount", "kind": "int", "low": 1, "high": 50, "log": true}
+{"name": "input.Scenario.mode", "kind": "categorical", "choices": ["a", "b"]}
+```
+
+`name` is a dotted path into the run params. LHS covers every axis evenly however
+many axes there are, which is the property plain random sampling loses as
+dimensions grow — that is the reason to prefer it over a grid or a shotgun.
+
+### Step 9 — Read results
+
+A results database is written by isicellpy's `DatabaseManager` during a
+calibration run. Read it with:
+
+- `isicell_results_summarize` — tables, row counts, and the error columns worth
+  optimising against. Start here; it tells you what the other calls can ask for.
+- `isicell_results_best(db, error, n)` — averages the error over conditions and
+  replicates, then ranks. The averaging is what makes two parameter sets
+  comparable.
+- `isicell_results_pareto(db, [errors])` — the sets no other set beats on every
+  error at once. With one error this is just the minimum.
+- `isicell_results_parameters(db, id)` — the nested parameter set behind an ID,
+  in exactly the shape `isicell_run_simulate` takes, so re-running a winner is
+  one call.
+- `isicell_results_get(db, table, filters)` — rows, filtered structurally:
+  `[{"column": "ID_PARAMETER", "op": "ge", "value": 3}]`. Not SQL.
+
+Two storage details the readers hide, and anything new must too: nested
+parameters are flattened with `$` in the table, and lists are stored as JSON
+strings. You see dotted names and real lists.
 
 ## 6. Validator codes
 
@@ -221,6 +262,9 @@ SQLite; query them with `isicell_results_best`, `isicell_results_pareto`,
   The `confirm` flags are ergonomics against accidents, **not a security
   control** — real gating is the MCP host's permission prompts. Say so rather
   than implying otherwise.
+- A tool describes, it does not program. A run names a measurement; a filter is a
+  structured comparison. When something is unreachable through them, add a named
+  measurement or a named reader — do not open a hole for Python or SQL.
 - Never echo the `main` block of a runParams file back to a caller; it carries
   the database password.
 - Do not add tools beyond what was asked.
