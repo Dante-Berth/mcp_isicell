@@ -17,7 +17,7 @@ Working notes, not a spec. Delete entries as they are done.
 | M8 refine | narrow the space around a winner; session survives restart | done |
 | M9 proof | the whole pipeline run against a real ISiCell checkout | done |
 
-41 tools, 305 tests that need no ISiCell, plus 17 integration tests that do
+41 tools, 309 tests that need no ISiCell, plus 17 integration tests that do
 (`ISICELL_ROOT=... uv run pytest -m integration`).
 `uv run pytest && uv run ruff check .`
 
@@ -94,7 +94,8 @@ need root: `apt-get download` plus `dpkg-deb -x` into a prefix, with `CMAKE_PREF
 ## Upstream defects worth reporting
 
 Not this repo's to fix. 1-4 were found by reading; 5 and 6 by running the
-real generator and watching the mapping come back empty.
+real generator and watching the mapping come back empty. 5 and 6 are written up
+ready to file under `upstream/`; nothing has been sent.
 
 1. `routes/python.js:518` wires `validatePackageName` onto a `:packageSpecifier` route.
    It reads `req.params.packageName`, `undefined` there, so the regex tests the string
@@ -104,11 +105,15 @@ real generator and watching the mapping come back empty.
    any route today, a live injection sink if it is ever wired up.
 3. `DatabaseManager.get_conditions()` raises `NameError` (`DatabaseManager.py:198`).
 4. `backend/dbInfo.json` holds a plaintext Postgres password in the repository.
-5. Position markers are emitted with `code.replace('\n', marker, 1)`
-   (`PrimoCell.hpp:182`, `Scenario.hpp:39`), so a single-line function gets no marker
-   and the build reports no `metaInfo` for it. Compiler errors inside such a function
-   cannot be mapped back to the model. `W_FUNC_SINGLE_LINE` warns; the fix upstream is
-   to prepend the marker rather than substitute a newline.
+5. Position markers are emitted with `code.replace('\n', marker, 1)` at **four** sites,
+   not the two recorded here before: `PrimoCell.hpp:182`, `Scenario.hpp:39`, and also
+   `Scenario.hpp:168` (`codeInit`) and `:179` (`codeLoop`). Single-line code has no
+   newline to consume, so it gets no marker and the build reports no `metaInfo` for it.
+   `W_FUNC_SINGLE_LINE` now warns on all four. The fix is *not* to prepend the marker,
+   as this entry used to say: `Isigen.py:30` records the line the marker sits on and
+   `:32` strips it in place, so a prepended marker reports the blank line above the
+   signature. `code.partition('\n')` keeps the reported line where it is today.
+   Written up in `upstream/single-line-code-loses-its-marker.md`.
 6. `metaDataDebug` markers exist only for functions, `codeInit` and `codeLoop`. State
    code and transition conditions get none, so upstream reports no `metaInfo` for the
    most likely place for a user to write bad C++. Worked around here rather than waited
@@ -118,3 +123,7 @@ real generator and watching the mapping come back empty.
    transition condition. Such a finding is tagged `attributed_by: "case-label"` to
    distinguish it from one upstream actually reported. The upstream fix is still worth
    making -- markers would survive template changes; a layout inference will not.
+   Written up in `upstream/no-markers-for-state-code-or-transitions.md`, with the
+   concrete patch: a marker slot on `caseTemplate`, keyed to distinguish the two
+   switches, because `debugData` is keyed per file and `behave` and `nextState` emit a
+   case for the same state names.

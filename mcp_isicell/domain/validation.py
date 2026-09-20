@@ -276,6 +276,24 @@ def _check_scenario_code(model: BuilderData) -> list[Finding]:
         ("scenario.codeLoop", model.scenario.codeLoop),
     ):
         text = code or ""
+        if text and "\n" not in text:
+            # The same marker loss as W_FUNC_SINGLE_LINE, at the two sites that
+            # inline scenario code rather than a function. A one-line initialiser
+            # is idiomatic, so this fires more often than the function case.
+            out.append(
+                Finding(
+                    "warning",
+                    "W_FUNC_SINGLE_LINE",
+                    label,
+                    "Codegen marks this block's position with "
+                    "`code.replace('\\n', marker, 1)` "
+                    "(core/src/scenarios/Scenario.hpp:168,179), so single-line code gets "
+                    "no marker and the build emits no metaInfo for it. A compiler error "
+                    "in it is then reported against generated source with no way back "
+                    "here.",
+                    "Put the body on its own line so build errors name this block.",
+                )
+            )
         if SCENARIO_POINTER.search(text) and not SCENARIO_LOCAL_S.search(text):
             out.append(
                 Finding(

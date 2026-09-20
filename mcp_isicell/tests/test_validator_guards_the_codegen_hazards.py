@@ -79,3 +79,28 @@ def test_multi_line_function_code_is_not_warned_about(minimal_model, catalogue):
     minimal_model.cell.functions = {"f1": FunctionCode(code="void grow() {\n\tage += 1.0;\n}")}
     report = validate(minimal_model, catalogue)
     assert "W_FUNC_SINGLE_LINE" not in report.codes()
+
+
+def test_single_line_scenario_init_code_is_warned_about(minimal_model, catalogue):
+    """Scenario.hpp:168 consumes a newline codeInit does not have, losing the marker."""
+    minimal_model.scenario.codeInit = "createCell();"
+    report = validate(minimal_model, catalogue)
+    assert "W_FUNC_SINGLE_LINE" in report.codes()
+    assert "W_FUNC_SINGLE_LINE" not in [f.code for f in report.errors]
+
+
+def test_single_line_scenario_loop_code_is_warned_about(minimal_model, catalogue):
+    """Scenario.hpp:179 has the same shape as the init site."""
+    minimal_model.scenario.codeLoop = "createCell();"
+    assert "W_FUNC_SINGLE_LINE" in validate(minimal_model, catalogue).codes()
+
+
+def test_multi_line_scenario_code_is_not_warned_about(minimal_model, catalogue):
+    minimal_model.scenario.codeInit = "for (int i = 0; i < 10; i++) {\n\tcreateCell();\n}"
+    assert "W_FUNC_SINGLE_LINE" not in validate(minimal_model, catalogue).codes()
+
+
+def test_empty_scenario_code_is_not_warned_about(minimal_model, catalogue):
+    """An absent block generates nothing, so it has no marker to lose."""
+    minimal_model.scenario.codeInit = ""
+    assert "W_FUNC_SINGLE_LINE" not in validate(minimal_model, catalogue).codes()

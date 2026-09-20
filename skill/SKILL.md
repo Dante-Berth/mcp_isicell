@@ -127,7 +127,9 @@ void grow() { age += 1.0; }   // compiles, but errors in it are unattributable
 ```
 
 `W_FUNC_SINGLE_LINE` flags this. It is a warning, not an error: such a model
-builds fine, you just lose the diagnostics when it does not.
+builds fine, you just lose the diagnostics when it does not. It covers
+`codeInit` and `codeLoop` too (`Scenario.hpp:168,179` consume a newline the same
+way), where a one-line body is even more idiomatic.
 
 ## 5. The session is remembered
 
@@ -373,7 +375,7 @@ narrows to a single value, which would leave the next sweep nothing to compare.
 | `E_BAD_IDENTIFIER` | name is not a valid C++ identifier |
 | `E_RECORDED_ATTR_TYPE` | recorded attribute type has no SQL mapping |
 | `E_SCENARIO_POINTER` | scenario init/loop code calls through `s->` |
-| `W_FUNC_SINGLE_LINE` | function body on one line — build errors cannot name it |
+| `W_FUNC_SINGLE_LINE` | function, `codeInit` or `codeLoop` on one line — build errors cannot name it |
 | `W_UNREACHABLE_STATE` | not reachable from `CellInstantiation` |
 | `W_DEAD_END_STATE` | no way out, and not `DeadCell` |
 | `W_UNORDERED_CONDITIONS` | second unconditional destination is dead code |
