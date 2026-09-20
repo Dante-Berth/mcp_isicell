@@ -15,8 +15,10 @@ Working notes, not a spec. Delete entries as they are done.
 | M6 scoring | named metrics against a reference, ranked results | done |
 | M7 jobs | background sweeps, status, logs, stop | done |
 | M8 refine | narrow the space around a winner; session survives restart | done |
+| M9 proof | codegen verified against a real ISiCell checkout | done |
 
-41 tools, 273 tests, none needing ISiCell.
+41 tools, 273 tests that need no ISiCell, plus 5 integration tests that do
+(`ISICELL_ROOT=... uv run pytest -m integration`).
 `uv run pytest && uv run ruff check .`
 
 ## What is deliberately not built
@@ -48,6 +50,12 @@ Working notes, not a spec. Delete entries as they are done.
   catcher.
 
 ## Watch
+
+- **The full build is still unproven here.** Codegen through the real mainGenerator.py is
+  verified, but cmake stops at `find_package(Boost REQUIRED)` on this machine and
+  installing Boost and CGAL needs root. The generated `console` binary, the SWIG module
+  and therefore every run against a real simulation remain untested against real ISiCell.
+  Run `-m integration` where the Dockerfile's dependencies are installed to close that.
 
 - **Refinement is local.** It narrows around the single best point, so a space with two
   good regions loses one of them at the first round. That is the usual trade for a local

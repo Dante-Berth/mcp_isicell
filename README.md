@@ -184,6 +184,18 @@ uv run ruff check .
 
 The compile path is tested against a stub generator and the run path against a fake build
 with a stub `Simu`, so the suite needs no C++ toolchain and no SWIG.
+
+There are also integration tests against a real checkout, deselected by default:
+
+```sh
+ISICELL_ROOT=/path/to/ISiCell uv run pytest -m integration
+```
+
+They drive the real `mainGenerator.py` and assert that a model authored through the tools
+becomes the expected C++ — the state as an enum member, its code in the `behave()` switch,
+`DeadCell` as `this->die()`. The codegen ones need only Python, because `mainGenerator.py`
+runs Isigen before it ever invokes cmake. The one that builds the generated project also
+needs Boost and CGAL, and skips naming the missing dependency if they are absent.
 Tests that need a real checkout are marked `integration` and deselected by default.
 
 `mcp_isicell/domain/` is pure: no I/O, no subprocesses. Everything that touches the world
