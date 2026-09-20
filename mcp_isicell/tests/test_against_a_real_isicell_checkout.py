@@ -3,7 +3,14 @@
 Marked `integration` and deselected by default: these need ISICELL_ROOT to point
 at a checkout, and the build ones additionally need the system libraries the
 Dockerfile installs (libboost-all-dev, libcgal-dev) plus cmake, make and a C++17
-compiler.
+compiler. Those libraries do not have to be installed as root: unpacking the
+.deb files into a prefix and pointing CMAKE_PREFIX_PATH, BOOST_ROOT and CPATH at
+it satisfies every find_package in core/CMakeLists.txt.
+
+Running a simulation additionally needs swig and the Python packages isicellpy
+imports (pandas, tqdm, networkx, plotly, seaborn, matplotlib, scipy, optuna,
+SQLAlchemy). The module is a compiled .so, so the interpreter that imports it
+must be the one it was built against.
 
     ISICELL_ROOT=/path/to/ISiCell uv run pytest -m integration
 
@@ -25,6 +32,25 @@ import pytest
 from mcp_isicell.domain.models import BuilderData
 
 pytestmark = pytest.mark.integration
+
+# A cell that ages one unit per step and dies past five, seeded with ten cells.
+# Small enough to build quickly, and its trajectory is fully determined: exactly
+# ten Alive until age passes 5, then zero.
+BEHAVIOUR_MODEL = {
+    "cellTypes": ["Common"],
+    "cell": {
+        "attributes": [{"type": "double", "value": "age", "source": "user"}],
+        "States": [{"name": "Alive", "code": "age += 1.0;"}],
+        "initializationTransitions": [
+            {"from": "CellInstantiation", "destinations": [{"to": "Alive", "condition": ""}]}
+        ],
+        "Transitions": [
+            {"from": "Alive", "destinations": [{"to": "DeadCell", "condition": "age > 5"}]}
+        ],
+    },
+    "scenario": {"codeInit": "for(int i=0;i<10;i++) createCell();"},
+    "paramInputs": {"Cell": [{"type": "double", "value": "age"}], "Scenario": []},
+}
 
 MODEL = {
     "cellTypes": ["Common"],
@@ -53,11 +79,13 @@ def checkout() -> Path:
     return root
 
 
-def run_generator(root: Path, token: str, mode: str) -> subprocess.CompletedProcess:
+def run_generator(
+    root: Path, token: str, mode: str, model: dict | None = None
+) -> subprocess.CompletedProcess:
     """Drive the real mainGenerator.py exactly as the backend does."""
     return subprocess.run(
         ["python3", str(root / "scripts" / "mainGenerator.py"), token, mode],
-        input=json.dumps(BuilderData.model_validate(MODEL).to_generator_json()),
+        input=json.dumps(BuilderData.model_validate(model or MODEL).to_generator_json()),
         capture_output=True,
         text=True,
         cwd=str(root),
@@ -126,3 +154,67 @@ def test_the_generated_project_compiles(generated):
             pytest.skip(f"a system dependency is missing:\n{tail[-400:]}")
         pytest.fail(f"generation failed:\n{tail}")
     assert (target / "build" / "console").is_file()
+
+
+@pytest.fixture
+def simulation(checkout: Path):
+    """Build the python-mode tree: the SWIG module a run actually imports."""
+    if shutil.which("cmake") is None or shutil.which("swig") is None:
+        pytest.skip("cmake and swig are needed to build the python module")
+    token = "mcp_integration_sim"
+    target = checkout / "simulations" / token
+    if target.exists():
+        shutil.rmtree(target)
+    result = run_generator(checkout, token, "python", BEHAVIOUR_MODEL)
+    if result.returncode != 0:
+        tail = (result.stdout or "")[-2000:]
+        if "Could NOT find" in tail:
+            pytest.skip(f"a system dependency is missing:\n{tail[-400:]}")
+        pytest.fail(f"python-mode generation failed:\n{tail}")
+    yield target
+    if target.exists():
+        shutil.rmtree(target)
+
+
+def test_the_python_mode_build_produces_the_importable_module(simulation):
+    """mainGenerator.py:174-175 copies the built .so and its wrapper into isicell/."""
+    assert (simulation / "isicell" / "_isiCellPy.so").is_file()
+    assert (simulation / "isicell" / "isiCellPy.py").is_file()
+
+
+def test_a_generated_run_script_drives_a_real_simulation(simulation):
+    """The whole pipeline: a model authored here, simulated, measured as data.
+
+    The trajectory is determined by the model -- ten cells that age one unit per
+    step and die past five -- so this asserts semantics, not just that it ran.
+    """
+    from mcp_isicell.backend.simscript import RunSpec, render
+
+    script = simulation / "generated_run.py"
+    script.write_text(
+        render(
+            RunSpec(
+                params={"input": {"Cell": {"Common": {"age": 0.0}}, "Scenario": {}}},
+                steps=[0, 4, 8],
+                catcher="countState",
+                seed=42,
+            )
+        )
+    )
+    proc = subprocess.run(
+        [os.environ.get("ISICELL_PYTHON", "python3"), str(script)],
+        capture_output=True,
+        text=True,
+        cwd=str(simulation),
+        timeout=900,
+    )
+    if "ModuleNotFoundError" in (proc.stderr or ""):
+        pytest.skip(f"isicellpy's own dependencies are missing:\n{proc.stderr[-300:]}")
+    payload = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert payload["ok"], payload
+    counts = payload["data"]
+    # Seeded by the scenario, still alive before the transition fires.
+    assert counts["0"]["Alive"] == 10
+    assert counts["4"]["Alive"] == 10
+    # age > 5 compiles to die(), so the population is gone by step 8.
+    assert counts["8"]["Alive"] == 0

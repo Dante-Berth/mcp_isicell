@@ -37,3 +37,30 @@ def test_cell_types_without_common_are_warned_about(minimal_model, catalogue):
     minimal_model.cellTypes = ["Tumour", "Immune"]
     report = validate(minimal_model, catalogue)
     assert "W_NO_COMMON_CELL_TYPE" in report.codes()
+
+
+def test_scenario_init_code_calling_through_a_pointer_is_rejected(minimal_model, catalogue):
+    """codeInit is inlined into Scenario::init, where `s` is not declared."""
+    minimal_model.scenario.codeInit = "for(int i=0;i<10;i++) s->createCell();"
+    report = validate(minimal_model, catalogue)
+    assert "E_SCENARIO_POINTER" in report.codes()
+
+
+def test_scenario_loop_code_calling_through_a_pointer_is_rejected(minimal_model, catalogue):
+    minimal_model.scenario.codeLoop = "s->createCell();"
+    report = validate(minimal_model, catalogue)
+    assert "E_SCENARIO_POINTER" in report.codes()
+
+
+def test_scenario_code_calling_a_member_directly_is_accepted(minimal_model, catalogue):
+    """The form that actually compiled: the scope already is the Scenario."""
+    minimal_model.scenario.codeInit = "for(int i=0;i<10;i++) createCell();"
+    report = validate(minimal_model, catalogue)
+    assert "E_SCENARIO_POINTER" not in report.codes()
+
+
+def test_scenario_code_declaring_its_own_s_is_not_flagged(minimal_model, catalogue):
+    """The deref is that local variable's, so the rule must not fire on it."""
+    minimal_model.scenario.codeInit = "Scenario* s = this; s->createCell();"
+    report = validate(minimal_model, catalogue)
+    assert "E_SCENARIO_POINTER" not in report.codes()

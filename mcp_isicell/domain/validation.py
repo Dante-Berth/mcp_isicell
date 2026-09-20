@@ -51,6 +51,7 @@ def validate(
     findings += _check_functions(model)
     findings += _check_recorded(model)
     findings += _check_cell_types(model)
+    findings += _check_scenario_code(model)
     findings += _check_modules(model, catalogue, installed_modules)
     findings += _check_graph(model)
     return ValidationReport(findings)
@@ -237,6 +238,42 @@ def _check_recorded(model: BuilderData) -> list[Finding]:
                     f"Type {attr.type!r} has no SQL mapping; SchemeSQL.hpp convert() raises "
                     "`Unknown type` for anything outside bool/double/int and enums.",
                     "Record a scalar or enum attribute, or drop it from the recorded set.",
+                )
+            )
+    return out
+
+
+# `s->createCell()` is the idiom inside a Scenario *function*, where the scenario
+# arrives as a pointer. codeInit and codeLoop are inlined into Scenario::init and
+# Scenario::loop instead (core/src/scenarios/Scenario.hpp:168,179), where the
+# scope already is the Scenario, so `s` is simply undeclared.
+SCENARIO_POINTER = re.compile(r"\bs\s*->")
+
+# ... unless the code declares its own `s` first, in which case the deref is that
+# variable's and nothing is wrong. Matches `Scenario* s =`, `auto* s =`, `auto s =`.
+SCENARIO_LOCAL_S = re.compile(r"\b\w+\s*\*?\s*\bs\b\s*=")
+
+
+def _check_scenario_code(model: BuilderData) -> list[Finding]:
+    """Scenario init/loop code runs as the Scenario, not on a pointer to one."""
+    out: list[Finding] = []
+    for label, code in (
+        ("scenario.codeInit", model.scenario.codeInit),
+        ("scenario.codeLoop", model.scenario.codeLoop),
+    ):
+        text = code or ""
+        if SCENARIO_POINTER.search(text) and not SCENARIO_LOCAL_S.search(text):
+            out.append(
+                Finding(
+                    "error",
+                    "E_SCENARIO_POINTER",
+                    label,
+                    "This code calls through `s->`, but codeInit and codeLoop are inlined "
+                    "into Scenario::init and Scenario::loop "
+                    "(core/src/scenarios/Scenario.hpp:168,179), where the scope is the "
+                    "Scenario itself. g++ fails with `'s' was not declared in this scope`.",
+                    "Call the member directly, e.g. `createCell();` rather than "
+                    "`s->createCell();`.",
                 )
             )
     return out

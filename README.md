@@ -178,7 +178,7 @@ throws. `E_MODULE_MISSING_ON_DISK` catches this before a build is spent on it; t
 ## Development
 
 ```sh
-uv run pytest          # 273 tests, no ISiCell needed
+uv run pytest          # 277 tests, no ISiCell needed
 uv run ruff check .
 ```
 
@@ -193,9 +193,29 @@ ISICELL_ROOT=/path/to/ISiCell uv run pytest -m integration
 
 They drive the real `mainGenerator.py` and assert that a model authored through the tools
 becomes the expected C++ — the state as an enum member, its code in the `behave()` switch,
-`DeadCell` as `this->die()`. The codegen ones need only Python, because `mainGenerator.py`
-runs Isigen before it ever invokes cmake. The one that builds the generated project also
-needs Boost and CGAL, and skips naming the missing dependency if they are absent.
+`DeadCell` as `this->die()` — then build it and run it. The last one simulates ten cells
+that age one unit per step and die past five, and asserts the population is ten at step 4
+and zero at step 8: the model's own semantics, not just that something ran.
+
+The codegen tests need only Python, because `mainGenerator.py` runs Isigen before it ever
+invokes cmake. Building additionally needs cmake, make, a C++17 compiler, Boost and CGAL;
+running needs swig and the packages `isicellpy` imports. Each skips naming what is missing
+rather than failing.
+
+Those system libraries do not need root. Unpack them into a prefix and point cmake at it:
+
+```sh
+apt-get download libboost1.74-dev libgmp-dev libmpfr-dev libpq-dev libcgal-dev
+for f in *.deb; do dpkg-deb -x "$f" "$PWD/prefix"; done
+export CMAKE_PREFIX_PATH="$PWD/prefix/usr:$PWD/prefix/usr/lib/x86_64-linux-gnu/cmake"
+export BOOST_ROOT="$PWD/prefix/usr"
+export CPATH="$PWD/prefix/usr/include:$PWD/prefix/usr/include/x86_64-linux-gnu:$PWD/prefix/usr/include/postgresql"
+export LIBRARY_PATH="$PWD/prefix/usr/lib/x86_64-linux-gnu"
+export LD_LIBRARY_PATH="$LIBRARY_PATH:$LD_LIBRARY_PATH"
+```
+
+The SWIG module is a compiled `.so`, so the interpreter that imports it must be the one it
+was built against. Point `ISICELL_PYTHON` at that interpreter if it is not `python3`.
 Tests that need a real checkout are marked `integration` and deselected by default.
 
 `mcp_isicell/domain/` is pure: no I/O, no subprocesses. Everything that touches the world

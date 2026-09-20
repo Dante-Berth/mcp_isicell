@@ -41,7 +41,7 @@ enums                     {name: [values]}
 cellTypes                 [str]    empty => enum Type { Common }
 scenario
   attributes              [{type, value, source}]
-  codeInit, codeLoop      C++ run once / every step
+  codeInit, codeLoop      C++ run once / every step (see Scenario code below)
   functions               {idFunc: {code}}
 cell
   attributes              [{type, value, source}]
@@ -92,6 +92,24 @@ consequences:
 A condition is a C++ boolean expression evaluated on the cell. Helpers available
 to it: `isType(t)`, `isInContactWith(t)`, `countNeighborType(t)`, `isInContact()`,
 `getId()`, `getMotherId()`, `getRadius()`, `getParametersFrom(type)`.
+
+## 4b. Scenario code runs *as* the Scenario
+
+`codeInit` and `codeLoop` are inlined straight into `Scenario::init` and
+`Scenario::loop`. The scope there already is the Scenario, so its members are
+called bare:
+
+```cpp
+for(int i = 0; i < 10; i++) createCell();   // yes
+for(int i = 0; i < 10; i++) s->createCell(); // no: 's' was not declared
+```
+
+The `s->` form belongs in a scenario *function*, where the scenario arrives as a
+pointer. Getting it wrong costs a full C++ build before g++ says `'s' was not
+declared in this scope`; `E_SCENARIO_POINTER` catches it offline.
+
+A model with no `codeInit` creates no cells, and every run measures zero — valid,
+compiles, and tells you nothing.
 
 ## 5. The session is remembered
 
@@ -315,6 +333,7 @@ narrows to a single value, which would leave the next sweep nothing to compare.
 | `E_SPACE_DIM_CONFLICT` | 2D and 3D modules together |
 | `E_BAD_IDENTIFIER` | name is not a valid C++ identifier |
 | `E_RECORDED_ATTR_TYPE` | recorded attribute type has no SQL mapping |
+| `E_SCENARIO_POINTER` | scenario init/loop code calls through `s->` |
 | `W_UNREACHABLE_STATE` | not reachable from `CellInstantiation` |
 | `W_DEAD_END_STATE` | no way out, and not `DeadCell` |
 | `W_UNORDERED_CONDITIONS` | second unconditional destination is dead code |
