@@ -25,6 +25,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -425,6 +426,100 @@ def test_a_scored_sweep_ranks_real_simulations(tools, checkout, tmp_path):
         # The winning parameters come back in the shape a run takes.
         winner = tools.isicell_results_parameters(database, ranked[0]["ID_PARAMETER"])
         assert "age" in winner["input"]["Cell"]["Common"]
+    finally:
+        if target.exists():
+            shutil.rmtree(target)
+
+
+def test_a_background_sweep_runs_to_completion_against_real_isicell(tools, checkout, tmp_path):
+    """The job path: detached child, real simulations, exit code collected.
+
+    The offline suite runs this against a stub Simu, so it proves the registry
+    and the reconciliation but never that a detached child can actually reach a
+    real build and write results into it.
+    """
+    if shutil.which("cmake") is None or shutil.which("swig") is None:
+        pytest.skip("cmake and swig are needed to build the python module")
+    _author_the_ageing_model(tools)
+    token = "mcp_integration_job"
+    target = checkout / "simulations" / token
+    database = str(tmp_path / "background.db")
+    try:
+        built = tools.isicell_build_compile(type="python", token=token, confirm=True)
+        if not built["ok"] and any("Could NOT find" in x for x in built["stdout_tail"]):
+            pytest.skip("a system dependency is missing")
+        assert built["ok"], built["stdout_tail"][-10:]
+
+        started = tools.isicell_sweep_run(
+            base_params={"input": {"Cell": {"Common": {"age": 0.0}}, "Scenario": {}}},
+            steps=[0, 4],
+            parameters=[{"name": "input.Cell.Common.age", "low": 0.0, "high": 3.0}],
+            n_samples=2,
+            seed=1,
+            database=database,
+            overwrite=True,
+            background=True,
+            confirm=True,
+        )
+        assert started["background"] is True
+        job = started["job"]
+
+        deadline = time.time() + 900
+        status = tools.isicell_job_status(job)
+        while status["status"] == "running" and time.time() < deadline:
+            time.sleep(2)
+            status = tools.isicell_job_status(job)
+        assert status["status"] == "finished", tools.isicell_job_log(job, tail=20)["lines"]
+        # Collected because this process started it -- a job inherited across a
+        # restart settles as finished with no code, which is a known limit.
+        assert status.get("exit_code") == 0
+
+        # The child really simulated: its summary line, and rows in the database.
+        lines = tools.isicell_job_log(job, tail=20)["lines"]
+        assert any('"failed": 0' in line for line in lines), lines
+        tables = tools.isicell_results_summarize(database)["tables"]
+        assert tables["countState"]["rows"] > 0
+    finally:
+        if target.exists():
+            shutil.rmtree(target)
+
+
+def test_stopping_a_job_kills_the_simulation_it_is_running(tools, checkout, tmp_path):
+    """stop signals the process group, so the child's own simulations go too."""
+    if shutil.which("cmake") is None or shutil.which("swig") is None:
+        pytest.skip("cmake and swig are needed to build the python module")
+    _author_the_ageing_model(tools)
+    token = "mcp_integration_stop"
+    target = checkout / "simulations" / token
+    try:
+        built = tools.isicell_build_compile(type="python", token=token, confirm=True)
+        if not built["ok"] and any("Could NOT find" in x for x in built["stdout_tail"]):
+            pytest.skip("a system dependency is missing")
+        assert built["ok"], built["stdout_tail"][-10:]
+
+        # Long enough that it is certainly still running when we stop it.
+        started = tools.isicell_sweep_run(
+            base_params={"input": {"Cell": {"Common": {"age": 0.0}}, "Scenario": {}}},
+            steps=list(range(0, 2000, 100)),
+            parameters=[{"name": "input.Cell.Common.age", "low": 0.0, "high": 3.0}],
+            n_samples=40,
+            seed=1,
+            database=str(tmp_path / "stopped.db"),
+            overwrite=True,
+            background=True,
+            confirm=True,
+        )
+        job = started["job"]
+        deadline = time.time() + 60
+        while tools.isicell_job_status(job)["status"] != "running" and time.time() < deadline:
+            time.sleep(0.2)
+        if tools.isicell_job_status(job)["status"] != "running":
+            pytest.skip("the sweep finished before it could be stopped")
+
+        stopped = tools.isicell_job_stop(job, confirm=True)
+        assert stopped["stopped"] is True
+        # Interrupted is not failed: it says a person stopped it, not that it broke.
+        assert tools.isicell_job_status(job)["status"] == "interrupted"
     finally:
         if target.exists():
             shutil.rmtree(target)
