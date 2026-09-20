@@ -17,6 +17,23 @@ from mcp_isicell.domain.modules import Catalogue
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
+@pytest.fixture(autouse=True)
+def isolated_state(tmp_path, monkeypatch):
+    """Keep every test out of the user's real state directory.
+
+    The session autosaves and jobs keep a registry, both under ISICELL_STATE_DIR.
+    Without this a test run would overwrite whatever model the user was
+    authoring.
+    """
+    state = tmp_path / "state"
+    monkeypatch.setenv("ISICELL_STATE_DIR", str(state))
+    monkeypatch.setenv("ISICELL_JOBS_DIR", str(state / "jobs"))
+    from mcp_isicell import server
+
+    monkeypatch.setattr(server.SESSION, "path", state / "session.json")
+    yield state
+
+
 @pytest.fixture
 def catalogue() -> Catalogue:
     """The real officialModules.json, vendored from the ISiCell distribution."""

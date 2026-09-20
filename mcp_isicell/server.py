@@ -24,7 +24,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from .backend.jobs import JobStore
 from .backend.local import BUILD_TYPES, LocalBackend, RunSpec
 from .backend.simscript import describe_catchers
-from .config import IsicellPaths, jobs_directory
+from .config import IsicellPaths, jobs_directory, session_path
 from .domain import mutations as mut
 from .domain.models import BuilderData
 from .domain.modules import Catalogue
@@ -38,7 +38,7 @@ from .results.writer import ResultsWriter, measurement_rows
 from .session import ModelSession
 
 mcp = MCPServer("isicell")
-SESSION = ModelSession()
+SESSION = ModelSession.restored(session_path())
 
 
 def _tool(fn):
@@ -207,7 +207,7 @@ def isicell_model_export() -> dict[str, Any]:
 def isicell_model_import(model: dict[str, Any], name: str = "imported") -> dict[str, Any]:
     """Load a complete builderData document as the current model."""
     SESSION.name = name
-    SESSION.token = None
+    SESSION.set_token(None)
     return _apply(BuilderData.model_validate(model))
 
 
@@ -228,7 +228,7 @@ def isicell_model_load(path: str) -> dict[str, Any]:
     if "finalJson" in payload:  # demo files wrap the model
         payload = payload["finalJson"]
     SESSION.name = Path(path).stem
-    SESSION.token = None
+    SESSION.set_token(None)
     return _apply(BuilderData.model_validate(payload))
 
 
@@ -375,7 +375,7 @@ def isicell_build_compile(
         )
     result = _backend().compile(SESSION.model, type, token=token, confirm=confirm)
     if result.ok:
-        SESSION.token = result.token
+        SESSION.set_token(result.token)
     return {
         "token": result.token,
         "ok": result.ok,

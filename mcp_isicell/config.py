@@ -14,6 +14,21 @@ from pathlib import Path
 
 ENV_ROOT = "ISICELL_ROOT"
 ENV_JOBS = "ISICELL_JOBS_DIR"
+ENV_STATE = "ISICELL_STATE_DIR"
+
+
+def state_directory() -> Path:
+    """Where the server keeps what must survive a restart."""
+    raw = os.environ.get(ENV_STATE)
+    if raw:
+        return Path(raw).expanduser()
+    base = os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state"
+    return Path(base).expanduser() / "mcp_isicell"
+
+
+def session_path() -> Path:
+    """The autosaved authoring session."""
+    return state_directory() / "session.json"
 
 
 def jobs_directory() -> Path:
@@ -26,8 +41,7 @@ def jobs_directory() -> Path:
     raw = os.environ.get(ENV_JOBS)
     if raw:
         return Path(raw).expanduser()
-    base = os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state"
-    return Path(base).expanduser() / "mcp_isicell" / "jobs"
+    return state_directory() / "jobs"
 
 
 @dataclass(frozen=True)
