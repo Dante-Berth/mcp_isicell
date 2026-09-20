@@ -106,7 +106,9 @@ def test_an_unknown_catcher_is_refused_before_the_simulation_starts(built):
 def test_the_generated_script_does_not_survive_the_run(built):
     """A run leaves nothing behind in the build directory."""
     server.isicell_run_simulate(params={}, steps=[0])
-    assert not (built / "simulations" / "sim_ok" / "_mcp_run.py").exists()
+    # Globbed, not named: the script carries a uuid so concurrent runs cannot
+    # collide, and a test pinned to one name would pass without checking.
+    assert list((built / "simulations" / "sim_ok").glob("_mcp_run*.py")) == []
 
 
 def test_an_attribute_catcher_reads_that_attribute(built):

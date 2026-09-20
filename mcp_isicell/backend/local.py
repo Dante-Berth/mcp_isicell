@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from random import randrange
+from uuid import uuid4
 
 from ..config import IsicellPaths, isicell_python
 from ..domain.models import BuilderData
@@ -247,6 +248,21 @@ class LocalBackend:
 
         The script is written into the build directory rather than the user's
         workspace, so a run leaves nothing behind where a person keeps files.
+
+        Its name carries a uuid because runs against one build overlap: two
+        background sweeps get distinct job tokens and start side by side
+        (jobs.py start refuses a duplicate token, not a second job), and a
+        single isicell_run_simulate can be called while a sweep is in flight.
+        Under one fixed name the second writer wins and the first launcher
+        execs the other run's parameters, reporting them under its own index --
+        wrong numbers in the results database with nothing raised anywhere. The
+        losing tail case is the first run unlinking before the second launcher
+        opens the path, which at least fails loudly.
+
+        A SIGTERM'd sweep (jobs.py stop signals the group) skips the finally and
+        leaves one stray script behind. They are inert, and collecting them here
+        would mean deleting paths belonging to runs that may still be live --
+        the bug this name avoids.
         """
         self.require()
         validate_token(token)
@@ -255,7 +271,7 @@ class LocalBackend:
             raise BuildFailed(
                 f"build {token!r} has no Python module. Compile with type='python' or 'all'."
             )
-        script = build / "_mcp_run.py"
+        script = build / f"_mcp_run_{uuid4().hex}.py"
         script.write_text(render(spec))
         try:
             result = self.run_script(token, script, cwd=build)
