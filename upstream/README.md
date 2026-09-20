@@ -1,8 +1,10 @@
 # Upstream defect reports
 
 Findings in ISiCell itself, written to be filed against the ISiCell project
-rather than fixed here. Each is verified against the `isicell-main` snapshot in
-this repository and cites the lines it was read from.
+rather than fixed here. Each was verified by reading the `isicell-main` source
+snapshot and cites the lines it was read from. That snapshot is not in this
+repository -- it is third-party and `.gitignore`d -- so the line numbers are
+worth re-checking against a current checkout before filing.
 
 Nothing here has been filed. They are drafts, ready to paste.
 

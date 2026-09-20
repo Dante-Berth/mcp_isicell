@@ -1,7 +1,9 @@
 # Single-line code loses its `metaDataDebug` marker
 
-Verified against the `isicell-main` snapshot vendored beside this file; line
-numbers are from that snapshot.
+Verified by reading the `isicell-main` source snapshot; line numbers are from
+that snapshot and may drift. The snapshot itself is not in this repository --
+it is a third-party blob, kept out by `.gitignore` -- so check the lines against
+your own checkout before filing.
 
 ## What happens
 
