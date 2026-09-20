@@ -16,9 +16,12 @@ Working notes, not a spec. Delete entries as they are done.
 | M7 jobs | background sweeps, status, logs, stop | done |
 | M8 refine | narrow the space around a winner; session survives restart | done |
 | M9 proof | the whole pipeline run against a real ISiCell checkout | done |
+| M10 parallel | `workers` fans a sweep out across processes | done |
+| M11 optuna | archived studies, trials and fitness read as data | done |
 
-41 tools, 309 tests that need no ISiCell, plus 17 integration tests that do
-(`ISICELL_ROOT=... uv run pytest -m integration`).
+45 tools, 320 tests that need no ISiCell, plus 17 integration tests that do
+(`ISICELL_ROOT=... uv run pytest -m integration`) and one skipped unless Optuna is
+installed.
 `uv run pytest && uv run ruff check .`
 
 M9 covers the full path *through the tools themselves*: a model authored one
@@ -46,6 +49,17 @@ need root: `apt-get download` plus `dpkg-deb -x` into a prefix, with `CMAKE_PREF
   expression scoring a run would be flexible and would also reintroduce exactly the
   arbitrary execution the catcher design avoids. If a real study needs a metric the set
   lacks, add the metric.
+- **Replaying an archived suggest function.** `OptunaDB.build_params(trial_id)`
+  (`OptunaWrapper.py:1175`) rebuilds a structured parameter set by executing the suggest
+  function archived in the database. `isicell_optuna_*` reads the same archives as data
+  and never replays them -- not even to construct the reader, which is why it does not
+  use `OptunaDB` at all: that class calls `load_context()` from `__init__` when the
+  `isicell_context` tables are present (:588-593), and `load_context` `exec`s stored
+  source (:1124) and unpickles stored payloads (:1120). Asking it for a list of study
+  names runs whatever the file carries, and its `readonly=True` governs only the SQLite
+  connection. What the replay was needed for in the common case -- decoding a
+  categorical from the stored category index -- is done from
+  `trial_params.distribution_json` instead.
 - **The HTTP backend.** Running on the same host removes the cookie session, the IP
   pinning that silently logs a client out when its address changes, and the
   `cookie.secure` problem over plain HTTP. If a remote topology is ever needed, the seam
@@ -53,10 +67,8 @@ need root: `apt-get download` plus `dpkg-deb -x` into a prefix, with `CMAKE_PREF
 
 ## Next, in rough order
 
-- **Optuna archives.** `OptunaDB` reads studies, trials and fitness from the same file;
-  `build_params(trial_id)` replays an archived suggest function to rebuild a full
-  parameter set. That replay executes archived code, so it needs the same care as a
-  catcher.
+Nothing queued. The entries that were here are done: parallel sweeps (`workers`) and
+Optuna archives (`isicell_optuna_*`).
 
 ## Watch
 
@@ -70,6 +82,19 @@ need root: `apt-get download` plus `dpkg-deb -x` into a prefix, with `CMAKE_PREF
   config path as argv[1] and writes through PluginSQL, so exercising it means standing up
   a database. The runs this package actually makes go through the SWIG module, which
   *is* covered end to end. Worth adding if the `sql` build type gains a caller.
+
+- **Optuna trial parameters come back flat.** A suggest function that maps an axis onto
+  a nested run parameter leaves no record of the mapping, so `isicell_optuna_parameters`
+  returns what Optuna recorded, named as Optuna named it. It is not a run parameter set
+  and must not be passed to `isicell_run_simulate` as one. Recovering the nesting would
+  mean executing the archived function.
+
+- **The Optuna schema is assumed, and checked where it can be.** The readers go at the
+  SQLite tables directly, so a schema change upstream would break them silently. The
+  subset used is the one `OptunaWrapper` itself queries against real archives, plus
+  `distribution_json`, which is optional at read time. One test builds a real study with
+  Optuna and asserts the same things, including that `best` matches `study.best_params`;
+  it is skipped where Optuna is absent. Verified against Optuna 5.0.0.
 
 - **Refinement is local.** It narrows around the single best point, so a space with two
   good regions loses one of them at the first round. That is the usual trade for a local

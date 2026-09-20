@@ -37,6 +37,7 @@ from .explore.design import plan
 from .explore.metrics import describe_metrics, score
 from .explore.refine import refine
 from .explore.sampling import Parameter
+from .results.optuna_archive import OptunaArchive
 from .results.reader import ResultsDatabase
 from .results.writer import ResultsWriter, measurement_rows
 from .session import ModelSession
@@ -1041,6 +1042,76 @@ def isicell_results_parameters(database: str, id_parameter: int) -> dict[str, An
     """The nested parameter set behind an ID, ready to pass to isicell_run_simulate."""
     with ResultsDatabase(database) as db:
         return db.parameters_for(id_parameter)
+
+
+# --------------------------------------------------------------------------
+# Optuna archives
+# --------------------------------------------------------------------------
+#
+# Read as data, never replayed. ISiCell's own OptunaDB execs archived source
+# the moment it is constructed (OptunaWrapper.py:588-593, :1124), so these read
+# the SQLite schema directly instead. See results/optuna_archive.py.
+
+
+@mcp.tool()
+@_tool
+def isicell_optuna_studies(database: str) -> list[dict[str, Any]]:
+    """Studies in an Optuna archive: trial counts by state, and directions.
+
+    Reads the archive as data. ISiCell's OptunaDB helper executes source stored
+    in the file as soon as it opens one, so it is not used here; nothing in
+    this tool or its siblings replays an archived function.
+    """
+    with OptunaArchive(database) as archive:
+        return archive.studies()
+
+
+@mcp.tool()
+@_tool
+def isicell_optuna_trials(
+    database: str,
+    study: str,
+    state: str | None = "COMPLETE",
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    """Trials of one study, each with its objective values and parameters.
+
+    `state` filters on Optuna's own trial state (COMPLETE, FAIL, PRUNED,
+    RUNNING); pass None for every trial.
+    """
+    with OptunaArchive(database) as archive:
+        return archive.trials(study, state=state, limit=limit)
+
+
+@mcp.tool()
+@_tool
+def isicell_optuna_best(
+    database: str, study: str, objective: int = 0, n: int = 5
+) -> list[dict[str, Any]]:
+    """The trials a study scored best, ranked by its own recorded direction.
+
+    A maximised objective is ranked as maximised; the direction used is in the
+    reply rather than assumed.
+    """
+    with OptunaArchive(database) as archive:
+        return archive.best(study, objective=objective, n=n)
+
+
+@mcp.tool()
+@_tool
+def isicell_optuna_parameters(database: str, trial_id: int) -> dict[str, Any]:
+    """One trial's parameters, decoded from what Optuna stored.
+
+    Categorical axes come back as their value rather than the stored category
+    index, decoded from the distribution Optuna records beside the parameter.
+
+    They are flat, named as Optuna recorded them, and are *not* a run parameter
+    set: mapping an axis onto a nested run parameter was the archived suggest
+    function's job, and this does not execute it. Build the run params from
+    these values yourself, or re-run the sweep through isicell_sweep_run.
+    """
+    with OptunaArchive(database) as archive:
+        return archive.params(trial_id)
 
 
 def main() -> None:

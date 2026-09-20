@@ -338,6 +338,27 @@ Two storage details the readers hide, and anything new must too: nested
 parameters are flattened with `$` in the table, and lists are stored as JSON
 strings. You see dotted names and real lists.
 
+### Step 9b — Reading an Optuna archive
+
+A calibration someone ran through ISiCell's `OptunaWrapper` leaves a SQLite file
+of studies, trials and fitness. Read it with:
+
+- `isicell_optuna_studies(db)` — the studies, trial counts by state, and each
+  study's optimisation direction. Start here.
+- `isicell_optuna_trials(db, study)` — completed trials with their objective
+  values and parameters. `state=None` for every trial, including failures.
+- `isicell_optuna_best(db, study, n)` — ranked by the study's own recorded
+  direction, so a maximised objective is not read as a minimised one.
+- `isicell_optuna_parameters(db, trial_id)` — one trial's parameters, with a
+  categorical decoded from the index Optuna stored rather than left as a number.
+
+Two limits worth knowing. These parameters are **flat**, named as Optuna named
+them: turning an axis into a nested run parameter was the archived suggest
+function's job, so they are not a run parameter set and passing them to
+`isicell_run_simulate` will not work. And nothing archived is ever executed —
+which is why `OptunaDB` is not used at all, since constructing it `exec`s source
+stored in the file (`OptunaWrapper.py:588-593`, `:1124`).
+
 ### Step 10 — Refine, and go round again
 
 A scored sweep tells you where the best point was; `isicell_sweep_refine` tells

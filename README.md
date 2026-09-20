@@ -35,6 +35,12 @@ named metrics, so a calibration ends in a ranked answer rather than a pile of nu
 A long sweep runs as a background job, so the call returns immediately, and refinement
 proposes where to look next without spending anything.
 
+**Optuna archives, read as data.** A study written by ISiCell's `OptunaWrapper` is
+read back through `isicell_optuna_*` — studies, trials, fitness, and the best trials
+ranked by the study's own direction. The archives carry pickles and Python source, and
+upstream's own helper executes them when it opens one; these readers go at the SQLite
+schema instead and execute nothing.
+
 **A session that survives.** The model you are authoring is autosaved, so a restart or a
 reconnect does not cost you the work.
 
