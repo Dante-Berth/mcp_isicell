@@ -144,7 +144,8 @@ isicell_sweep_preview(parameters=[
    replicates=3)                -> 120 runs laid out, no compute spent
 isicell_sweep_run(..., database="sweep.db",
    reference={"0": 10, "10": 30}, column="Alive", metrics=["rmse"],
-   confirm=True)                -> every run scored against observed data
+   workers=8, confirm=True)     -> every run scored against observed data,
+                                   eight simulations at a time
 isicell_results_best("sweep.db", "rmse", n=5)
 isicell_results_parameters("sweep.db", 3)  -> the winner, ready to re-run
 ```

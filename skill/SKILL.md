@@ -243,6 +243,12 @@ A sweep crosses three axes: sampled **parameters**, fixed **conditions**, and
 and costs nothing; `isicell_sweep_run` needs `confirm=True` because it is one
 simulation per run.
 
+`workers=N` runs N of them at once. Each simulation is a whole process, so the
+useful ceiling is the CPU count and the tool caps it there; a model heavy on
+memory wants fewer. The default is 1. Ordering does not depend on it -- rows are
+recorded in design order however the runs interleave, so `ID_CONDITION 2` means
+the third condition whether or not it finished third.
+
 A parameter is declared as data, not as a callback:
 
 ```
@@ -384,7 +390,9 @@ narrows to a single value, which would leave the next sweep nothing to compare.
   undefined `rawParameters` (`DatabaseManager.py:188-203`). Use
   `get('condition', ...)`.
 - **`MultiSimu` keeps a module-global process pool** (`MultiSimu.py:9`) reused
-  across instances. A long-lived server must not assume it is clean.
+  across instances. A long-lived server must not assume it is clean. This
+  package does not use it: `workers` fans out its own simulations, which are
+  separate processes already.
 
 ## 9. Engineering standard
 

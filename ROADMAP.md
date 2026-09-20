@@ -17,7 +17,7 @@ Working notes, not a spec. Delete entries as they are done.
 | M8 refine | narrow the space around a winner; session survives restart | done |
 | M9 proof | the whole pipeline run against a real ISiCell checkout | done |
 
-41 tools, 296 tests that need no ISiCell, plus 17 integration tests that do
+41 tools, 305 tests that need no ISiCell, plus 17 integration tests that do
 (`ISICELL_ROOT=... uv run pytest -m integration`).
 `uv run pytest && uv run ruff check .`
 
@@ -53,15 +53,18 @@ need root: `apt-get download` plus `dpkg-deb -x` into a prefix, with `CMAKE_PREF
 
 ## Next, in rough order
 
-- **Parallel runs.** Sweeps run sequentially. `MultiSimu` parallelises over the same
-  three axes, but keeps a module-global pool (`MultiSimu.py:9`) a long-lived server would
-  inherit. Worth it once sweep durations justify the lifecycle work.
 - **Optuna archives.** `OptunaDB` reads studies, trials and fitness from the same file;
   `build_params(trial_id)` replays an archived suggest function to rebuild a full
   parameter set. That replay executes archived code, so it needs the same care as a
   catcher.
 
 ## Watch
+
+- **Parallelism is per sweep, not per server.** `workers` fans out one sweep's runs
+  across threads blocking on subprocesses, capped at the CPU count. Nothing limits two
+  sweeps started at once from asking for the CPU count each; the runs are separate
+  processes, so the machine oversubscribes rather than corrupting anything. A shared
+  limit would have to live in the job registry.
 
 - **The console binary is built but never executed by a test.** `main.cpp` takes a
   config path as argv[1] and writes through PluginSQL, so exercising it means standing up

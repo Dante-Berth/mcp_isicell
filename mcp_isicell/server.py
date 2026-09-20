@@ -16,6 +16,7 @@ import json
 import os
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -438,6 +439,28 @@ def isicell_run_script(script_path: str, token: str | None = None) -> dict[str, 
     return _backend().run_script(use, Path(script_path).expanduser())
 
 
+# A simulation is a separate process (backend.simulate spawns scriptLauncher),
+# so the pool is threads around a blocking wait rather than processes: the GIL
+# is released for the whole subprocess.run, and no model has to be picklable.
+# Both branches below are lazy and yield in design order, so which runs finish
+# first never reaches the results database.
+MAX_WORKERS_NOTE = "workers is capped by the run count and by the CPU count."
+
+
+def _effective_workers(requested: int, total_runs: int) -> tuple[int, str | None]:
+    """How many runs to have in flight, and why that is not what was asked for."""
+    if requested < 1:
+        raise IsicellError("workers must be at least 1.")
+    cpus = os.cpu_count() or 1
+    effective = max(1, min(requested, total_runs, cpus))
+    if effective == requested:
+        return effective, None
+    return effective, (
+        f"workers reduced from {requested} to {effective}: "
+        f"{total_runs} runs, {cpus} CPUs. {MAX_WORKERS_NOTE}"
+    )
+
+
 def _design(
     base_params: dict[str, Any],
     parameters: list[dict[str, Any]] | None,
@@ -642,6 +665,7 @@ def isicell_sweep_run(
     reference: dict[str, Any] | None = None,
     column: str | None = None,
     metrics: list[str] | None = None,
+    workers: int = 1,
     background: bool = False,
     confirm: bool = False,
 ) -> dict[str, Any]:
@@ -659,6 +683,12 @@ def isicell_sweep_run(
     scores go into an `error` table. That is what isicell_results_best and
     isicell_results_pareto read, so scoring is what turns a sweep into a ranked
     answer.
+
+    `workers` runs that many simulations at once. Each one is a full process,
+    so the useful ceiling is the CPU count, and a memory-hungry model may want
+    fewer; the default of 1 keeps a sweep costing what it has always cost.
+    Ordering is unaffected -- rows are written in design order whatever order
+    the runs finish in.
     """
     use = token or SESSION.token
     if not use:
@@ -667,14 +697,21 @@ def isicell_sweep_run(
 
     # One preview branch for both modes. It costs nothing, so it runs before any
     # requirement the caller has not had to decide on yet.
+    planned, _ = _effective_workers(workers, len(design.runs))
     if not confirm:
         where = " in the background" if background else ""
+        parallel = (
+            f" They run {planned} at a time."
+            if planned > 1
+            else f" They run one at a time; workers= up to {os.cpu_count() or 1} runs them in parallel."
+        )
         return {
             "ran": False,
             **design.summary(),
             "runs": _describe_runs(design, limit=10),
+            "workers": planned,
             "note": f"Preview only. Pass confirm=True to run these "
-            f"{len(design.runs)} simulations{where}.",
+            f"{len(design.runs)} simulations{where}.{parallel}",
         }
 
     if background:
@@ -698,6 +735,7 @@ def isicell_sweep_run(
             reference=reference,
             column=column,
             metrics=metrics,
+            workers=workers,
         )
 
     if reference is not None and not database:
@@ -719,19 +757,29 @@ def isicell_sweep_run(
             writer.write_conditions(design.conditions)
 
     backend = _backend()
+    used, reduced = _effective_workers(workers, len(design.runs))
     outcomes: list[dict[str, Any]] = []
     recorded: list[dict[str, Any]] = []
     scores: list[dict[str, Any]] = []
     failures = 0
+
+    def simulate_one(run) -> dict[str, Any]:
+        return backend.simulate(
+            use, RunSpec(params=run.params, steps=steps, catcher=catcher, seed=run.seed)
+        )
+
+    # Both branches are lazy, so an outcome is bookkept and released as it
+    # arrives rather than every stdout being held until the last run lands.
+    pool = ThreadPoolExecutor(max_workers=used) if used > 1 else None
     try:
-        for run in design.runs:
+        simulated = map(simulate_one, design.runs) if pool is None else pool.map(
+            simulate_one, design.runs
+        )
+        for run, outcome in zip(design.runs, simulated):
             index = run.index(
                 with_parameter=design.with_parameter,
                 with_condition=design.with_condition,
                 with_replicate=design.with_replicate,
-            )
-            outcome = backend.simulate(
-                use, RunSpec(params=run.params, steps=steps, catcher=catcher, seed=run.seed)
             )
             measured = outcome.get("measurements") or {}
             ok = outcome["ok"] and measured.get("ok", False)
@@ -759,6 +807,10 @@ def isicell_sweep_run(
             if scores:
                 writer.write_errors(scores)
     finally:
+        if pool is not None:
+            # Queued runs are dropped on the way out; ones already started are
+            # separate processes and are waited for, not orphaned.
+            pool.shutdown(wait=True, cancel_futures=True)
         if writer is not None:
             writer.close()
 
@@ -766,6 +818,8 @@ def isicell_sweep_run(
         "ran": True,
         "token": use,
         **design.summary(),
+        "workers": used,
+        "workersNote": reduced,
         "failed": failures,
         "database": database,
         "table": catcher.replace(":", "_") if database else None,
