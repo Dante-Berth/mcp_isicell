@@ -209,6 +209,20 @@ def _check_functions(model: BuilderData) -> list[Finding]:
         ("scenario.functions", model.scenario.functions),
     ):
         for key, fn in functions.items():
+            if fn.code and "\n" not in fn.code:
+                out.append(
+                    Finding(
+                        "warning",
+                        "W_FUNC_SINGLE_LINE",
+                        f"{label}.{key}",
+                        "Codegen marks a function's position with "
+                        "`code.replace('\\n', marker, 1)` (PrimoCell.hpp:182, "
+                        "Scenario.hpp:39), so single-line code gets no marker and the "
+                        "build emits no metaInfo. A compiler error in it is then "
+                        "reported against generated source with no way back here.",
+                        "Put the body on its own line so build errors name this function.",
+                    )
+                )
             if not FUNCTION_NAME.search(fn.code or ""):
                 out.append(
                     Finding(

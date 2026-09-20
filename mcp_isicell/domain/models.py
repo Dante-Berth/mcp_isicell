@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # Not states. They compile to method calls -- `this->init()` and `this->die()`
 # respectively -- at core/src/cells/PrimoCell.hpp:29-32.
@@ -60,7 +60,19 @@ class State(BaseModel):
 
 
 class FunctionCode(BaseModel):
+    """A user-written C++ function.
+
+    Accepts a bare string as well as {"code": ...}: `to_generator_json` flattens
+    these to strings for the templates, so re-importing a generated payload --
+    what `isicell_model_import` does with a saved one -- must round-trip.
+    """
+
     code: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_a_bare_string(cls, value: Any) -> Any:
+        return {"code": value} if isinstance(value, str) else value
 
 
 class Scenario(BaseModel):
@@ -103,8 +115,24 @@ class BuilderData(BaseModel):
         """The exact dict to pipe to mainGenerator.py on stdin.
 
         `by_alias` matters: Transition.from_ must serialise back to "from".
+
+        Functions flatten to bare strings. The templates index them as
+        `for idFunc, code in ...functions.items()` and then call `code.replace`
+        and `re.search(..., code)` (PrimoCell.hpp:182, Scenario.hpp:39), so a
+        `{"code": ...}` object dies inside Isigen's exec with
+        `AttributeError: 'dict' object has no attribute 'replace'` -- and takes
+        the metaInfo map down with it, which is what maps a g++ error back onto
+        the function the user wrote.
         """
-        return self.model_dump(by_alias=True)
+        data = self.model_dump(by_alias=True)
+        for owner in ("cell", "scenario"):
+            functions = data.get(owner, {}).get("functions")
+            if functions:
+                data[owner]["functions"] = {
+                    key: value["code"] if isinstance(value, dict) else value
+                    for key, value in functions.items()
+                }
+        return data
 
     def state_names(self) -> list[str]:
         return [s.name for s in self.cell.States]

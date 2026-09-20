@@ -17,7 +17,7 @@ Working notes, not a spec. Delete entries as they are done.
 | M8 refine | narrow the space around a winner; session survives restart | done |
 | M9 proof | the whole pipeline run against a real ISiCell checkout | done |
 
-41 tools, 277 tests that need no ISiCell, plus 7 integration tests that do
+41 tools, 281 tests that need no ISiCell, plus 9 integration tests that do
 (`ISICELL_ROOT=... uv run pytest -m integration`).
 `uv run pytest && uv run ruff check .`
 
@@ -83,7 +83,8 @@ need root: `apt-get download` plus `dpkg-deb -x` into a prefix, with `CMAKE_PREF
 
 ## Upstream defects worth reporting
 
-Found by reading; not this repo's to fix.
+Not this repo's to fix. 1-4 were found by reading; 5 and 6 by running the
+real generator and watching the mapping come back empty.
 
 1. `routes/python.js:518` wires `validatePackageName` onto a `:packageSpecifier` route.
    It reads `req.params.packageName`, `undefined` there, so the regex tests the string
@@ -93,3 +94,11 @@ Found by reading; not this repo's to fix.
    any route today, a live injection sink if it is ever wired up.
 3. `DatabaseManager.get_conditions()` raises `NameError` (`DatabaseManager.py:198`).
 4. `backend/dbInfo.json` holds a plaintext Postgres password in the repository.
+5. Position markers are emitted with `code.replace('\n', marker, 1)`
+   (`PrimoCell.hpp:182`, `Scenario.hpp:39`), so a single-line function gets no marker
+   and the build reports no `metaInfo` for it. Compiler errors inside such a function
+   cannot be mapped back to the model. `W_FUNC_SINGLE_LINE` warns; the fix upstream is
+   to prepend the marker rather than substitute a newline.
+6. `metaDataDebug` markers exist only for functions, `codeInit` and `codeLoop`. State
+   code and transition conditions get none, so a g++ error in a state's behaviour is
+   never attributable -- the most likely place for a user to write bad C++.

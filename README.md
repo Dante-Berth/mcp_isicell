@@ -178,7 +178,7 @@ throws. `E_MODULE_MISSING_ON_DISK` catches this before a build is spent on it; t
 ## Development
 
 ```sh
-uv run pytest          # 277 tests, no ISiCell needed
+uv run pytest          # 281 tests, no ISiCell needed
 uv run ruff check .
 ```
 

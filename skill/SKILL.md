@@ -111,6 +111,24 @@ declared in this scope`; `E_SCENARIO_POINTER` catches it offline.
 A model with no `codeInit` creates no cells, and every run measures zero — valid,
 compiles, and tells you nothing.
 
+## 4c. Write function bodies over several lines
+
+Codegen marks where each function landed with
+`code.replace('\n', marker, 1)` (`PrimoCell.hpp:182`, `Scenario.hpp:39`). Code
+with no newline has nothing to replace, so it gets no marker, the build emits no
+`metaInfo`, and a compiler error inside it is reported as a line in generated
+source with no way back to the function you wrote.
+
+```cpp
+void grow() {          // yes: an error here is reported as `grow`
+    age += 1.0;
+}
+void grow() { age += 1.0; }   // compiles, but errors in it are unattributable
+```
+
+`W_FUNC_SINGLE_LINE` flags this. It is a warning, not an error: such a model
+builds fine, you just lose the diagnostics when it does not.
+
 ## 5. The session is remembered
 
 The model you are authoring is held by the server and **autosaved**, so a
@@ -334,6 +352,7 @@ narrows to a single value, which would leave the next sweep nothing to compare.
 | `E_BAD_IDENTIFIER` | name is not a valid C++ identifier |
 | `E_RECORDED_ATTR_TYPE` | recorded attribute type has no SQL mapping |
 | `E_SCENARIO_POINTER` | scenario init/loop code calls through `s->` |
+| `W_FUNC_SINGLE_LINE` | function body on one line — build errors cannot name it |
 | `W_UNREACHABLE_STATE` | not reachable from `CellInstantiation` |
 | `W_DEAD_END_STATE` | no way out, and not `DeadCell` |
 | `W_UNORDERED_CONDITIONS` | second unconditional destination is dead code |

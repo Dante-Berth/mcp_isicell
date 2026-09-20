@@ -218,3 +218,83 @@ def test_a_generated_run_script_drives_a_real_simulation(simulation):
     assert counts["4"]["Alive"] == 10
     # age > 5 compiles to die(), so the population is gone by step 8.
     assert counts["8"]["Alive"] == 0
+
+
+# A cell function with an undeclared identifier in it. The function is what
+# carries metaDataDebug markers (PrimoCell.hpp:182), so this is the case the
+# diagnostic mapping exists for.
+BROKEN_FUNCTION_MODEL = {
+    "cellTypes": ["Common"],
+    "cell": {
+        "attributes": [{"type": "double", "value": "age", "source": "user"}],
+        "States": [{"name": "Alive", "code": "age += 1.0;"}],
+        "initializationTransitions": [
+            {"from": "CellInstantiation", "destinations": [{"to": "Alive", "condition": ""}]}
+        ],
+        "Transitions": [
+            {"from": "Alive", "destinations": [{"to": "DeadCell", "condition": "age > 5"}]}
+        ],
+        "functions": {"f1": {"code": "void boom() {\n  age += notAThing;\n}"}},
+    },
+    "paramInputs": {"Cell": [{"type": "double", "value": "age"}], "Scenario": []},
+}
+
+
+@pytest.fixture
+def backend(checkout: Path, monkeypatch):
+    """The real LocalBackend, not the stub the offline suite uses."""
+    from mcp_isicell.backend.local import backend_from_env
+
+    monkeypatch.setenv("ISICELL_ROOT", str(checkout))
+    made = backend_from_env()
+    assert made is not None
+    return made
+
+
+def test_a_model_with_a_cell_function_compiles(backend, checkout):
+    """The templates index functions as strings; an object kills Isigen outright."""
+    if shutil.which("cmake") is None:
+        pytest.skip("cmake is needed to build the generated project")
+    model = json.loads(json.dumps(BROKEN_FUNCTION_MODEL))
+    model["cell"]["functions"]["f1"]["code"] = "void grow() {\n  age += 1.0;\n}"
+    model["cell"]["States"][0]["code"] = "grow();"
+    target = checkout / "simulations" / "mcp_integration_fn_ok"
+    try:
+        result = backend.compile(
+            BuilderData.model_validate(model),
+            token="mcp_integration_fn_ok",
+            build_type="sql",
+            confirm=True,
+        )
+        if not result.ok and any("Could NOT find" in line for line in result.stdout_tail):
+            pytest.skip("a system dependency is missing")
+        assert result.ok, result.stdout_tail[-10:] + result.stderr_tail[-10:]
+    finally:
+        if target.exists():
+            shutil.rmtree(target)
+
+
+def test_a_compiler_error_is_reported_against_the_function_the_user_wrote(backend, checkout):
+    """The point of metaInfo: a g++ line in generated source becomes `boom`/`f1`."""
+    if shutil.which("cmake") is None:
+        pytest.skip("cmake is needed to build the generated project")
+    target = checkout / "simulations" / "mcp_integration_diag"
+    try:
+        result = backend.compile(
+            BuilderData.model_validate(BROKEN_FUNCTION_MODEL),
+            token="mcp_integration_diag",
+            build_type="sql",
+            confirm=True,
+        )
+        if any("Could NOT find" in line for line in result.stdout_tail):
+            pytest.skip("a system dependency is missing")
+        assert not result.ok
+        # Isigen emitted the map at all -- empty means the payload shape is wrong.
+        assert result.meta_info, "no metaInfo: functions are probably not bare strings"
+        owned = [d for d in result.diagnostics if d.get("model_element")]
+        assert owned, result.diagnostics
+        assert owned[0]["model_element"] == "boom"
+        assert owned[0]["idFunc"] == "f1"
+    finally:
+        if target.exists():
+            shutil.rmtree(target)

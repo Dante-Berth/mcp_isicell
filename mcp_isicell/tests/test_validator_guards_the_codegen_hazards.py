@@ -64,3 +64,18 @@ def test_scenario_code_declaring_its_own_s_is_not_flagged(minimal_model, catalog
     minimal_model.scenario.codeInit = "Scenario* s = this; s->createCell();"
     report = validate(minimal_model, catalogue)
     assert "E_SCENARIO_POINTER" not in report.codes()
+
+
+def test_single_line_function_code_is_warned_about(minimal_model, catalogue):
+    """No newline means no metaDataDebug marker, so no error can be attributed."""
+    minimal_model.cell.functions = {"f1": FunctionCode(code="void grow() { age += 1.0; }")}
+    report = validate(minimal_model, catalogue)
+    assert "W_FUNC_SINGLE_LINE" in report.codes()
+    # It still compiles, so this must not block a build.
+    assert "W_FUNC_SINGLE_LINE" not in [f.code for f in report.errors]
+
+
+def test_multi_line_function_code_is_not_warned_about(minimal_model, catalogue):
+    minimal_model.cell.functions = {"f1": FunctionCode(code="void grow() {\n\tage += 1.0;\n}")}
+    report = validate(minimal_model, catalogue)
+    assert "W_FUNC_SINGLE_LINE" not in report.codes()
