@@ -93,7 +93,16 @@ A condition is a C++ boolean expression evaluated on the cell. Helpers available
 to it: `isType(t)`, `isInContactWith(t)`, `countNeighborType(t)`, `isInContact()`,
 `getId()`, `getMotherId()`, `getRadius()`, `getParametersFrom(type)`.
 
-## 5. Step-by-step — the authoring loop
+## 5. The session is remembered
+
+The model you are authoring is held by the server and **autosaved**, so a
+restart or a reconnect does not cost you the work. `isicell_model_describe`
+after a restart shows the same model, its name and its build token.
+
+That is the server not forgetting, not a substitute for `isicell_model_save`,
+which exports to a file you chose and can put under version control.
+
+## 6. Step-by-step — the authoring loop
 
 ### Step 1 — Start a model
 
@@ -270,7 +279,27 @@ Two storage details the readers hide, and anything new must too: nested
 parameters are flattened with `$` in the table, and lists are stored as JSON
 strings. You see dotted names and real lists.
 
-## 6. Validator codes
+### Step 10 — Refine, and go round again
+
+A scored sweep tells you where the best point was; `isicell_sweep_refine` tells
+you where to look next. Give it the database, the error column and the same
+`parameters` the sweep used, and it returns a narrowed space centred on the
+winner — `shrink=0.5` keeps half the original width.
+
+It runs nothing. Narrowing costs nothing and another sweep costs a simulation
+per point, so the two are separate calls and spending stays your decision. Pass
+the returned `parameters` straight to `isicell_sweep_run`.
+
+Repeating this converges. Against a model whose truth was `growth = 2.0`, four
+rounds of six points took rmse from 13.93 to 0.36 and the estimate to 1.972,
+with the space closing from `[0, 10]` to `[1.66, 2.29]`.
+
+Two axes behave differently and say so in `notes`: a **categorical** axis is
+left alone, because there is no neighbourhood to narrow into and pinning it to
+the winner would hide the other choices for good; an **integer** axis never
+narrows to a single value, which would leave the next sweep nothing to compare.
+
+## 7. Validator codes
 
 | Code | Meaning |
 |---|---|
@@ -291,7 +320,7 @@ strings. You see dotted names and real lists.
 | `W_UNORDERED_CONDITIONS` | second unconditional destination is dead code |
 | `W_NO_COMMON_CELL_TYPE` | run params will need a `Cell.Common` block |
 
-## 7. Known upstream breakage
+## 8. Known upstream breakage
 
 - **Empty submodules.** In a zip export of ISiCell, every
   `core/modules/cellModules/*` is empty. Selecting an official module then fails
@@ -304,7 +333,7 @@ strings. You see dotted names and real lists.
 - **`MultiSimu` keeps a module-global process pool** (`MultiSimu.py:9`) reused
   across instances. A long-lived server must not assume it is clean.
 
-## 8. Engineering standard
+## 9. Engineering standard
 
 - The validator is the product. When a build fails for a reason the validator
   could have caught, add the rule and the test — do not just fix the model.

@@ -14,8 +14,9 @@ Working notes, not a spec. Delete entries as they are done.
 | M5 explore | LHS sweeps across points, conditions and replicates | done |
 | M6 scoring | named metrics against a reference, ranked results | done |
 | M7 jobs | background sweeps, status, logs, stop | done |
+| M8 refine | narrow the space around a winner; session survives restart | done |
 
-40 tools, 242 tests, none needing ISiCell.
+41 tools, 273 tests, none needing ISiCell.
 `uv run pytest && uv run ruff check .`
 
 ## What is deliberately not built
@@ -38,11 +39,6 @@ Working notes, not a spec. Delete entries as they are done.
 
 ## Next, in rough order
 
-- **Refining a sweep around a winner.** Scoring ranks points; the obvious next move is to
-  resample a narrower box around the best one and sweep again. That is a loop a caller
-  can drive today with `isicell_results_parameters` and a second `isicell_sweep_run`, so
-  the question is whether it deserves a tool of its own or stays a documented recipe.
-
 - **Parallel runs.** Sweeps run sequentially. `MultiSimu` parallelises over the same
   three axes, but keeps a module-global pool (`MultiSimu.py:9`) a long-lived server would
   inherit. Worth it once sweep durations justify the lifecycle work.
@@ -52,6 +48,11 @@ Working notes, not a spec. Delete entries as they are done.
   catcher.
 
 ## Watch
+
+- **Refinement is local.** It narrows around the single best point, so a space with two
+  good regions loses one of them at the first round. That is the usual trade for a local
+  search and is fine when the surface has one basin; it is the wrong tool when it does
+  not. Optuna exists for that case.
 
 - **A job outliving the server that started it.** The registry survives a restart and
   reconciliation reads /proc, so a job started by a previous process is still tracked --
