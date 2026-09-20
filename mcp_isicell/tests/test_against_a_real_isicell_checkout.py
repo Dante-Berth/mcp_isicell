@@ -523,3 +523,80 @@ def test_stopping_a_job_kills_the_simulation_it_is_running(tools, checkout, tmp_
     finally:
         if target.exists():
             shutil.rmtree(target)
+
+
+# Bad C++ in a state body and in a transition condition. Neither gets a
+# metaDataDebug marker, so both are unattributable from metaInfo alone -- and
+# between them they are the likeliest place for hand-written C++ to be wrong.
+BROKEN_STATE_MODEL = {
+    "cellTypes": ["Common"],
+    "cell": {
+        "attributes": [{"type": "double", "value": "age", "source": "user"}],
+        "States": [
+            {"name": "Alive", "code": "age += 1.0;"},
+            {"name": "Sick", "code": "age += notAThing;"},
+        ],
+        "initializationTransitions": [
+            {"from": "CellInstantiation", "destinations": [{"to": "Alive", "condition": ""}]}
+        ],
+        "Transitions": [
+            {"from": "Alive", "destinations": [{"to": "DeadCell", "condition": "age > 5"}]}
+        ],
+    },
+    "paramInputs": {"Cell": [{"type": "double", "value": "age"}], "Scenario": []},
+}
+
+
+def test_an_error_in_state_code_is_attributed_although_isigen_marks_nothing(backend, checkout):
+    """The gap this fallback exists for: empty metaInfo, but the state is named."""
+    if shutil.which("cmake") is None:
+        pytest.skip("cmake is needed to build the generated project")
+    target = checkout / "simulations" / "mcp_integration_state_diag"
+    try:
+        result = backend.compile(
+            BuilderData.model_validate(BROKEN_STATE_MODEL),
+            token="mcp_integration_state_diag",
+            build_type="sql",
+            confirm=True,
+        )
+        if any("Could NOT find" in line for line in result.stdout_tail):
+            pytest.skip("a system dependency is missing")
+        assert not result.ok
+        # The premise: upstream really does emit no marker for state code.
+        assert not result.meta_info, "metaInfo is no longer empty; upstream may have fixed this"
+        owned = [d for d in result.diagnostics if d.get("model_element")]
+        assert owned, result.diagnostics
+        assert owned[0]["model_element"] == "Sick"
+        assert owned[0]["kind"] == "state"
+        assert owned[0]["attributed_by"] == "case-label"
+    finally:
+        if target.exists():
+            shutil.rmtree(target)
+
+
+def test_an_error_in_a_transition_condition_names_its_source_state(backend, checkout):
+    """Same switch shape, other function: the condition belongs to `from`."""
+    if shutil.which("cmake") is None:
+        pytest.skip("cmake is needed to build the generated project")
+    model = json.loads(json.dumps(BROKEN_STATE_MODEL))
+    model["cell"]["States"] = [{"name": "Alive", "code": "age += 1.0;"}]
+    model["cell"]["Transitions"][0]["destinations"][0]["condition"] = "age > bogusVar"
+    target = checkout / "simulations" / "mcp_integration_cond_diag"
+    try:
+        result = backend.compile(
+            BuilderData.model_validate(model),
+            token="mcp_integration_cond_diag",
+            build_type="sql",
+            confirm=True,
+        )
+        if any("Could NOT find" in line for line in result.stdout_tail):
+            pytest.skip("a system dependency is missing")
+        assert not result.ok
+        owned = [d for d in result.diagnostics if d.get("model_element")]
+        assert owned, result.diagnostics
+        assert owned[0]["model_element"] == "Alive"
+        assert owned[0]["kind"] == "transition"
+        assert owned[0]["model_path"] == "cell.Transitions[from=Alive].condition"
+    finally:
+        if target.exists():
+            shutil.rmtree(target)

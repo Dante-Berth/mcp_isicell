@@ -197,6 +197,21 @@ model elements. The server surfaces it as `meta_info`, so a `g++` error at
 the model location, never the generated line — the generated file is rewritten
 on every build and the line number is worthless to the user.
 
+Upstream marks only functions, `codeInit` and `codeLoop`. For **state code and
+transition conditions** it marks nothing, so those diagnostics are recovered
+from the generated switch instead and carry `attributed_by: "case-label"`:
+
+```
+{"model_element": "Sick", "kind": "state",
+ "model_path": "cell.States[Sick].code", "attributed_by": "case-label"}
+```
+
+`kind` tells you which half of the model to fix: `state` means the state's own
+`code`, `transition` means a condition on a transition *out of* that state.
+Treat a `case-label` attribution as slightly weaker evidence than a marker — it
+reads generated layout rather than something the generator declared — so if the
+named element looks innocent, widen to the whole switch before insisting.
+
 ### Step 7 — Run
 
 `isicell_run_simulate(params, steps, catcher)` runs against the SWIG module, so

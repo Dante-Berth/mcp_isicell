@@ -97,3 +97,69 @@ def locate_in_model(meta: dict, filename: str, line: int) -> dict | None:
     if best is None:
         return None
     return {"element": best_key, **best}
+
+
+# The switch cases Isigen generates for state behaviour and transitions. Both
+# `behave()` and `nextState()` build their bodies from the same caseTemplate
+# (PrimoCell.hpp:18), so a case label is the one structural anchor that survives
+# into the generated C++.
+CASE_LABEL = re.compile(r"^\s*case\s+State::(?P<name>\w+)\s*:")
+# The two generated switch statements, named by the member function holding them.
+SWITCH_OWNER = re.compile(r"^\s*void\s+(?P<fn>behave|nextState)\s*\(\s*\)")
+
+# What each generated function was built from, in the model's own vocabulary.
+OWNER_KIND = {
+    "behave": ("state", "cell.States[{name}].code"),
+    "nextState": ("transition", "cell.Transitions[from={name}].condition"),
+}
+
+
+def locate_by_case_label(source: str, line: int) -> dict | None:
+    """Find the state or transition owning a generated line, without metaInfo.
+
+    Isigen emits `//isigen:metaDataDebug` markers for functions, codeInit and
+    codeLoop only (PrimoCell.hpp:182, Scenario.hpp:39), so a compiler error in a
+    state's behaviour or a transition's condition maps to nothing -- and that is
+    the likeliest place for hand-written C++ to be wrong. The generated shape is
+    recoverable anyway: `behave()` and `nextState()` are switches of
+    `case State::<name>` blocks, so the nearest case label at or above the error
+    names the element, and the enclosing function says which half of the model it
+    came from.
+
+    Returns None rather than guessing when the line is outside both switches.
+    """
+    owner_fn: str | None = None
+    case_name: str | None = None
+    case_line: int | None = None
+    depth_marker: str | None = None
+
+    for number, text in enumerate(source.splitlines(), start=1):
+        if number > line:
+            break
+        switch = SWITCH_OWNER.match(text)
+        if switch:
+            # A new generated function begins; anything before it is not ours.
+            owner_fn = switch.group("fn")
+            case_name = case_line = None
+            depth_marker = None
+            continue
+        label = CASE_LABEL.match(text)
+        if label and owner_fn:
+            case_name = label.group("name")
+            case_line = number
+        elif text.strip() == "default:" and owner_fn:
+            # Past the last generated case: the rest of the switch is template
+            # boilerplate, so an error there belongs to no model element.
+            depth_marker = "default"
+
+    if not owner_fn or not case_name or depth_marker == "default":
+        return None
+
+    kind, path = OWNER_KIND[owner_fn]
+    return {
+        "element": case_name,
+        "kind": kind,
+        "model_path": path.format(name=case_name),
+        "line": case_line,
+        "attributed_by": "case-label",
+    }

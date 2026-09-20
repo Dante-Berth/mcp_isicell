@@ -23,7 +23,13 @@ from ..config import IsicellPaths, isicell_python
 from ..domain.models import BuilderData
 from ..errors import BuildFailed, ConfirmationRequired, NotConfigured
 from .simscript import RunSpec, render
-from .streams import Progress, locate_in_model, parse_meta_info, parse_progress
+from .streams import (
+    Progress,
+    locate_by_case_label,
+    locate_in_model,
+    parse_meta_info,
+    parse_progress,
+)
 
 BUILD_TYPES = ("python", "sql", "all", "debug")
 
@@ -123,13 +129,14 @@ class LocalBackend:
             stdout_tail=progress.lines[-40:],
             stderr_tail=(proc.stderr or "").splitlines()[-40:],
             meta_info=meta,
-            diagnostics=self._diagnostics(proc.stdout, proc.stderr, meta),
+            diagnostics=self._diagnostics(proc.stdout, proc.stderr, meta, token),
             build_dir=str(self.paths.build_dir(token)),
         )
 
-    def _diagnostics(self, stdout: str, stderr: str, meta: dict) -> list[dict]:
+    def _diagnostics(self, stdout: str, stderr: str, meta: dict, token: str) -> list[dict]:
         """Compiler errors, mapped back onto model elements where possible."""
         out: list[dict] = []
+        sources: dict[str, str | None] = {}
         for line in (stdout or "").splitlines() + (stderr or "").splitlines():
             m = DIAGNOSTIC.match(line.strip())
             if not m:
@@ -145,8 +152,39 @@ class LocalBackend:
             if owner:
                 entry["model_element"] = owner.get("element")
                 entry["idFunc"] = owner.get("idFunc")
+            else:
+                # No marker: Isigen emits them for functions, codeInit and
+                # codeLoop only, so state code and transition conditions land
+                # here. The generated switch still names them.
+                if filename not in sources:
+                    sources[filename] = self._generated_source(token, filename)
+                source = sources[filename]
+                fallback = locate_by_case_label(source, entry["line"]) if source else None
+                if fallback:
+                    entry["model_element"] = fallback["element"]
+                    entry["kind"] = fallback["kind"]
+                    entry["model_path"] = fallback["model_path"]
+                    entry["attributed_by"] = fallback["attributed_by"]
             out.append(entry)
         return out
+
+    def _generated_source(self, token: str, filename: str) -> str | None:
+        """The generated file a diagnostic points at, if it is still on disk.
+
+        Read rather than kept in memory: the tree is rewritten on every build, so
+        the copy that produced this error is the one beside the build.
+        """
+        if "/" in filename or "\\" in filename:
+            return None
+        root = self.paths.build_dir(token) / "src"
+        if not root.is_dir():
+            return None
+        for candidate in root.rglob(filename):
+            try:
+                return candidate.read_text(errors="replace")
+            except OSError:
+                return None
+        return None
 
     def checksum(self, token: str) -> str | None:
         """The md5 of the model JSON this build was made from, if recorded."""

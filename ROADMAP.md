@@ -17,7 +17,7 @@ Working notes, not a spec. Delete entries as they are done.
 | M8 refine | narrow the space around a winner; session survives restart | done |
 | M9 proof | the whole pipeline run against a real ISiCell checkout | done |
 
-41 tools, 289 tests that need no ISiCell, plus 15 integration tests that do
+41 tools, 296 tests that need no ISiCell, plus 17 integration tests that do
 (`ISICELL_ROOT=... uv run pytest -m integration`).
 `uv run pytest && uv run ruff check .`
 
@@ -107,5 +107,11 @@ real generator and watching the mapping come back empty.
    cannot be mapped back to the model. `W_FUNC_SINGLE_LINE` warns; the fix upstream is
    to prepend the marker rather than substitute a newline.
 6. `metaDataDebug` markers exist only for functions, `codeInit` and `codeLoop`. State
-   code and transition conditions get none, so a g++ error in a state's behaviour is
-   never attributable -- the most likely place for a user to write bad C++.
+   code and transition conditions get none, so upstream reports no `metaInfo` for the
+   most likely place for a user to write bad C++. Worked around here rather than waited
+   on: `locate_by_case_label` reads the generated switch, whose `case State::<name>`
+   labels come from the same caseTemplate (`PrimoCell.hpp:18`), and the enclosing
+   function (`behave` vs `nextState`) says whether the line is state code or a
+   transition condition. Such a finding is tagged `attributed_by: "case-label"` to
+   distinguish it from one upstream actually reported. The upstream fix is still worth
+   making -- markers would survive template changes; a layout inference will not.
