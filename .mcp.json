@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "isicell": {
+      "command": "uv",
+      "args": ["run", "--directory", ".", "python", "-m", "mcp_isicell"],
+      "type": "stdio"
+    }
+  }
+}

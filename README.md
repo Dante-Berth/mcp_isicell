@@ -38,23 +38,27 @@ proposes where to look next without spending anything.
 **A session that survives.** The model you are authoring is autosaved, so a restart or a
 reconnect does not cost you the work.
 
-## Install
+## Connect an LLM to ISiCell
+
+That is what this is for. Pick your client.
+
+### Claude Code
+
+`.mcp.json` is in this repository, so from a clone:
 
 ```sh
-uv sync --group dev
+uv sync
+claude
 ```
 
-Point it at an ISiCell checkout to enable compiling and running:
+Claude Code finds the server and the tools are there. Add `ISICELL_ROOT` to the `env`
+block in `.mcp.json` to enable compiling and running.
 
-```sh
-export ISICELL_ROOT=/path/to/ISiCell
-export ISICELL_STATE_DIR=/path/to/state  # optional; session and job state
-```
+### Claude Desktop, Cursor, Continue, or any other MCP client
 
-Without `ISICELL_ROOT`, authoring and validation still work — that half needs nothing
-installed but this package.
-
-Register it with an MCP client:
+Add this to the client's MCP config
+(Claude Desktop: `~/.config/Claude/claude_desktop_config.json` on Linux,
+`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
 
 ```json
 {
@@ -62,10 +66,49 @@ Register it with an MCP client:
     "isicell": {
       "command": "uv",
       "args": ["run", "--directory", "/path/to/mcp_isicell", "python", "-m", "mcp_isicell"],
-      "env": { "ISICELL_ROOT": "/path/to/ISiCell" }
+      "env": {
+        "ISICELL_ROOT": "/path/to/ISiCell"
+      }
     }
   }
 }
+```
+
+Restart the client. Ask it *"what can you do with ISiCell?"* and it should call
+`isicell_status`.
+
+### Your own script
+
+```python
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+params = StdioServerParameters(
+    command="uv",
+    args=["run", "--directory", "/path/to/mcp_isicell", "python", "-m", "mcp_isicell"],
+)
+async with stdio_client(params) as (read, write):
+    async with ClientSession(read, write) as session:
+        await session.initialize()
+        await session.call_tool("isicell_model_new", {"name": "tumour"})
+```
+
+## Configuration
+
+| Variable | Needed for | Default |
+|---|---|---|
+| `ISICELL_ROOT` | compiling, running, sweeps | unset — authoring still works |
+| `ISICELL_STATE_DIR` | session autosave and job logs | `~/.local/state/mcp_isicell` |
+| `ISICELL_JOBS_DIR` | job logs, if kept apart from state | `$ISICELL_STATE_DIR/jobs` |
+
+**Without `ISICELL_ROOT` you still get the whole authoring half** — build a model,
+validate it, export it — because none of that needs ISiCell installed. Set it when you
+want to compile and run.
+
+Install the package itself with:
+
+```sh
+uv sync            # or: uv sync --group dev, to run the tests
 ```
 
 ## A worked example

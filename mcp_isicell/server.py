@@ -21,6 +21,7 @@ from typing import Any
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
+from . import __version__
 from .backend.jobs import JobStore
 from .backend.local import BUILD_TYPES, LocalBackend, RunSpec
 from .backend.simscript import describe_catchers
@@ -38,7 +39,24 @@ from .results.reader import ResultsDatabase
 from .results.writer import ResultsWriter, measurement_rows
 from .session import ModelSession
 
-mcp = MCPServer("isicell")
+mcp = MCPServer(
+    "isicell",
+    version=__version__,
+    instructions=(
+        "Drive ISiCell, a platform for agent-based cell biology models. A model is a "
+        "state machine per cell: states carry C++ behaviour, transitions carry C++ "
+        "conditions.\n\n"
+        "Start with isicell_status to see whether an ISiCell checkout is configured. "
+        "Authoring and validation need nothing installed; compiling and running need "
+        "ISICELL_ROOT.\n\n"
+        "The usual loop: isicell_model_new, add states and transitions, "
+        "isicell_model_validate until clean, isicell_build_compile, isicell_run_simulate. "
+        "Every authoring call returns fresh findings, so fix what it reports rather than "
+        "compiling and reading C++ errors.\n\n"
+        "CellInstantiation and DeadCell are not states: they compile to init() and die(). "
+        "Every model needs a transition out of the first and usually one into the second."
+    ),
+)
 SESSION = ModelSession.restored(session_path())
 
 
