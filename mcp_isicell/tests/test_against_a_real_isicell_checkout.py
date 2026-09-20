@@ -374,3 +374,57 @@ def test_compiling_a_broken_model_is_refused_before_any_build_runs(tools):
     with pytest.raises(Exception) as caught:
         tools.isicell_build_compile(type="python", token="mcp_integration_never", confirm=True)
     assert "E_NO_INIT_TRANSITION" in str(caught.value)
+
+
+def test_a_scored_sweep_ranks_real_simulations(tools, checkout, tmp_path):
+    """M5-M7 against real ISiCell: sample, simulate, score, rank, read back.
+
+    Starting `age` decides whether a cell survives to step 4, so the reference
+    {0: 10, 4: 10, 8: 0} is matched only by the low sample -- the ranking is a
+    fact about the model, not just a number the writer round-tripped.
+    """
+    if shutil.which("cmake") is None or shutil.which("swig") is None:
+        pytest.skip("cmake and swig are needed to build the python module")
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    _author_the_ageing_model(tools)
+    token = "mcp_integration_sweep"
+    target = checkout / "simulations" / token
+    database = str(tmp_path / "sweep.db")
+    try:
+        built = tools.isicell_build_compile(type="python", token=token, confirm=True)
+        if not built["ok"] and any("Could NOT find" in x for x in built["stdout_tail"]):
+            pytest.skip("a system dependency is missing")
+        assert built["ok"], built["stdout_tail"][-10:]
+        try:
+            swept = tools.isicell_sweep_run(
+                base_params={"input": {"Cell": {"Common": {"age": 0.0}}, "Scenario": {}}},
+                steps=[0, 4, 8],
+                parameters=[{"name": "input.Cell.Common.age", "low": 0.0, "high": 3.0}],
+                n_samples=3,
+                catcher="countState",
+                seed=1,
+                database=database,
+                overwrite=True,
+                reference={"0": 10, "4": 10, "8": 0},
+                column="Alive",
+                metrics=["rmse"],
+                confirm=True,
+            )
+        except ToolError as exc:
+            pytest.skip(f"the run interpreter is not usable: {exc}")
+        assert swept["failed"] == 0, swept
+        assert all(r["ok"] for r in swept["runs"]), swept["runs"]
+
+        ranked = tools.isicell_results_best(database, error_name="rmse", n=3)
+        assert len(ranked) == 3
+        # Ranking is by ascending error, and the best one reproduces the reference.
+        assert ranked[0]["score"] == pytest.approx(0.0)
+        assert ranked[0]["score"] <= ranked[-1]["score"]
+
+        # The winning parameters come back in the shape a run takes.
+        winner = tools.isicell_results_parameters(database, ranked[0]["ID_PARAMETER"])
+        assert "age" in winner["input"]["Cell"]["Common"]
+    finally:
+        if target.exists():
+            shutil.rmtree(target)

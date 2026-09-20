@@ -17,7 +17,7 @@ Working notes, not a spec. Delete entries as they are done.
 | M8 refine | narrow the space around a winner; session survives restart | done |
 | M9 proof | the whole pipeline run against a real ISiCell checkout | done |
 
-41 tools, 289 tests that need no ISiCell, plus 12 integration tests that do
+41 tools, 289 tests that need no ISiCell, plus 13 integration tests that do
 (`ISICELL_ROOT=... uv run pytest -m integration`).
 `uv run pytest && uv run ruff check .`
 
@@ -25,7 +25,8 @@ M9 covers the full path *through the tools themselves*: a model authored one
 `isicell_model_*` call at a time, compiled by `isicell_build_compile`, and measured by
 `isicell_run_simulate` -- ten cells that age and die on schedule. The layers below it
 are covered separately, so a bug that only appears when they are composed has somewhere
-to show up. The system libraries do **not**
+to show up. A scored sweep runs the M5-M7 chain over real simulations and checks the
+ranking is a fact about the model, not just a number the writer round-tripped. The system libraries do **not**
 need root: `apt-get download` plus `dpkg-deb -x` into a prefix, with `CMAKE_PREFIX_PATH`,
 `BOOST_ROOT` and `CPATH` pointed at it, satisfies every `find_package` in
 `core/CMakeLists.txt`.
