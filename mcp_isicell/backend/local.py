@@ -19,7 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from random import randrange
 
-from ..config import IsicellPaths
+from ..config import IsicellPaths, isicell_python
 from ..domain.models import BuilderData
 from ..errors import BuildFailed, ConfirmationRequired, NotConfigured
 from .simscript import RunSpec, render
@@ -66,7 +66,7 @@ class BuildResult:
 @dataclass
 class LocalBackend:
     paths: IsicellPaths
-    python: str = "python3"
+    python: str = field(default_factory=isicell_python)
     timeout: int = 1800
 
     def require(self) -> None:
@@ -182,13 +182,21 @@ class LocalBackend:
         build = self.paths.build_dir(token)
         if not build.is_dir():
             raise BuildFailed(f"no such build: {token}")
-        proc = subprocess.run(
-            [self.python, "-u", str(self.paths.script_launcher), str(build), str(script)],
-            capture_output=True,
-            text=True,
-            cwd=str(cwd or script.parent),
-            timeout=self.timeout,
-        )
+        try:
+            proc = subprocess.run(
+                [self.python, "-u", str(self.paths.script_launcher), str(build), str(script)],
+                capture_output=True,
+                text=True,
+                cwd=str(cwd or script.parent),
+                timeout=self.timeout,
+            )
+        except FileNotFoundError as exc:
+            # Raised bare this reaches the client as "Error executing tool",
+            # throwing away the one thing the caller needs: which path is wrong.
+            raise BuildFailed(
+                f"the run interpreter {self.python!r} does not exist. Set "
+                "ISICELL_PYTHON to the interpreter the build was compiled against."
+            ) from exc
         return {
             "ok": proc.returncode == 0,
             "returncode": proc.returncode,
@@ -249,7 +257,7 @@ def _last_json_object(stdout: str) -> dict | None:
 
 def backend_from_env() -> LocalBackend | None:
     paths = IsicellPaths.from_env()
-    return LocalBackend(paths) if paths else None
+    return LocalBackend(paths, python=isicell_python()) if paths else None
 
 
 __all__ = [

@@ -298,3 +298,79 @@ def test_a_compiler_error_is_reported_against_the_function_the_user_wrote(backen
     finally:
         if target.exists():
             shutil.rmtree(target)
+
+
+@pytest.fixture
+def tools(checkout: Path, monkeypatch):
+    """The MCP tool surface, pointed at the real checkout.
+
+    Everything above is backend-level. This exercises what an LLM actually
+    calls: the session, the validation gate on compiling, the token rebinding
+    and the run tool.
+    """
+    from mcp_isicell import server as sv
+
+    monkeypatch.setenv("ISICELL_ROOT", str(checkout))
+    sv.isicell_model_new(name="integration")
+    return sv
+
+
+def _author_the_ageing_model(sv) -> None:
+    """BEHAVIOUR_MODEL, built one tool call at a time."""
+    sv.isicell_model_add_state("Alive", "age += 1.0;")
+    sv.isicell_model_add_transition("CellInstantiation", "Alive", "")
+    sv.isicell_model_add_transition("Alive", "DeadCell", "age > 5")
+    sv.isicell_model_add_attribute("cell", "double", "age", is_param=True)
+    sv.isicell_model_set_scenario_code(init="for(int i=0;i<10;i++) createCell();")
+
+
+def test_a_model_authored_through_the_tools_validates_clean(tools):
+    """If this drifts, every later tool-level test is testing a broken model."""
+    _author_the_ageing_model(tools)
+    report = tools.isicell_model_validate()
+    assert report["ok"], report["findings"]
+
+
+def test_the_tool_loop_compiles_and_simulates_against_real_isicell(tools, checkout):
+    """Author, compile, run -- the whole loop the server's instructions describe."""
+    if shutil.which("cmake") is None or shutil.which("swig") is None:
+        pytest.skip("cmake and swig are needed to build the python module")
+    _author_the_ageing_model(tools)
+    token = "mcp_integration_tools"
+    target = checkout / "simulations" / token
+    try:
+        built = tools.isicell_build_compile(type="python", token=token, confirm=True)
+        if not built["ok"] and any("Could NOT find" in x for x in built["stdout_tail"]):
+            pytest.skip("a system dependency is missing")
+        assert built["ok"], built["stdout_tail"][-10:]
+        # A successful compile rebinds the session's token, so the run needs none.
+        assert tools.isicell_model_describe()["model"]["token"] == token
+
+        from mcp.server.mcpserver.exceptions import ToolError
+
+        try:
+            result = tools.isicell_run_simulate(
+                params={"input": {"Cell": {"Common": {"age": 0.0}}, "Scenario": {}}},
+                steps=[0, 4, 8],
+                catcher="countState",
+                seed=42,
+            )
+        except ToolError as exc:
+            # The run needs the interpreter the .so was built against; say which.
+            pytest.skip(f"the run interpreter is not usable: {exc}")
+        assert result["ok"], result["stderr_tail"]
+        assert result["data"]["0"]["Alive"] == 10
+        assert result["data"]["4"]["Alive"] == 10
+        assert result["data"]["8"]["Alive"] == 0
+    finally:
+        if target.exists():
+            shutil.rmtree(target)
+
+
+def test_compiling_a_broken_model_is_refused_before_any_build_runs(tools):
+    """The validation gate: a model with errors must not cost a three-minute build."""
+    tools.isicell_model_add_state("Alive", "age += 1.0;")
+    # No transition out of CellInstantiation: E_NO_INIT_TRANSITION.
+    with pytest.raises(Exception) as caught:
+        tools.isicell_build_compile(type="python", token="mcp_integration_never", confirm=True)
+    assert "E_NO_INIT_TRANSITION" in str(caught.value)

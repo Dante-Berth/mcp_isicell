@@ -100,6 +100,14 @@ async with stdio_client(params) as (read, write):
 | `ISICELL_ROOT` | compiling, running, sweeps | unset — authoring still works |
 | `ISICELL_STATE_DIR` | session autosave and job logs | `~/.local/state/mcp_isicell` |
 | `ISICELL_JOBS_DIR` | job logs, if kept apart from state | `$ISICELL_STATE_DIR/jobs` |
+| `ISICELL_PYTHON` | running simulations | `python3` |
+
+`ISICELL_PYTHON` is the interpreter that runs generated simulation scripts, which is
+usually **not** the one the server runs under. A build's `_isiCellPy.so` is compiled
+against one specific interpreter, and the scripts import isicellpy's dependencies
+(pandas, tqdm, networkx, plotly, seaborn, matplotlib, scipy, optuna, SQLAlchemy). If a
+run fails, `isicell_run_simulate` says which of the two is wrong rather than returning a
+traceback.
 
 **Without `ISICELL_ROOT` you still get the whole authoring half** — build a model,
 validate it, export it — because none of that needs ISiCell installed. Set it when you
@@ -178,7 +186,7 @@ throws. `E_MODULE_MISSING_ON_DISK` catches this before a build is spent on it; t
 ## Development
 
 ```sh
-uv run pytest          # 281 tests, no ISiCell needed
+uv run pytest          # 289 tests, no ISiCell needed
 uv run ruff check .
 ```
 

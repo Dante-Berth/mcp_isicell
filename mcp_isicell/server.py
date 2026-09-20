@@ -14,6 +14,7 @@ from __future__ import annotations
 import functools
 import json
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -25,7 +26,7 @@ from . import __version__
 from .backend.jobs import JobStore
 from .backend.local import BUILD_TYPES, LocalBackend, RunSpec
 from .backend.simscript import describe_catchers
-from .config import IsicellPaths, jobs_directory, session_path
+from .config import IsicellPaths, isicell_python, jobs_directory, session_path
 from .domain import mutations as mut
 from .domain.models import BuilderData
 from .domain.modules import Catalogue
@@ -94,7 +95,7 @@ def _backend() -> LocalBackend:
             "ISICELL_ROOT is not set. Authoring and validation work without it; "
             "compiling and running need an ISiCell checkout."
         )
-    return LocalBackend(paths)
+    return LocalBackend(paths, python=isicell_python())
 
 
 def _catalogue() -> Catalogue:
@@ -504,6 +505,44 @@ def isicell_list_metrics() -> list[dict[str, Any]]:
     return describe_metrics()
 
 
+# A run happens in a separate interpreter, so its failures are not exceptions
+# here -- they are a traceback on stderr. These turn the two common ones into a
+# sentence naming the cause, because "ModuleNotFoundError: pandas" buried in
+# twelve lines of runpy frames does not say *which* interpreter is wrong.
+MISSING_MODULE = re.compile(r"ModuleNotFoundError: No module named '([\w.]+)'")
+
+
+def _diagnose_run_failure(stderr: str) -> str:
+    """Why a generated run script died, said in terms the caller can act on."""
+    interpreter = isicell_python()
+    missing = MISSING_MODULE.search(stderr)
+    if missing:
+        name = missing.group(1)
+        if name in ("isicell", "isiCellPy"):
+            return (
+                "the build has no importable isicell module. Compile with "
+                "type='python' or 'all'."
+            )
+        return (
+            f"the simulation could not start: {interpreter!r} has no module {name!r}. "
+            "Generated run scripts import isicellpy, which needs pandas, tqdm, "
+            "networkx, plotly, seaborn, matplotlib, scipy, optuna and SQLAlchemy. "
+            f"Install them for {interpreter!r}, or set ISICELL_PYTHON to an "
+            "interpreter that has them -- it must also be the one the build's "
+            "_isiCellPy.so was compiled against."
+        )
+    if "undefined symbol" in stderr or "invalid ELF header" in stderr:
+        return (
+            f"the build's _isiCellPy.so does not load under {interpreter!r}. It is "
+            "compiled against one specific interpreter; set ISICELL_PYTHON to that "
+            "one, or recompile this build."
+        )
+    tail = [line for line in stderr.splitlines() if line.strip()][-3:]
+    if not tail:
+        return "the simulation failed to run and printed nothing."
+    return "the simulation failed to run: " + " | ".join(tail)
+
+
 @mcp.tool()
 @_tool
 def isicell_run_simulate(
@@ -530,6 +569,10 @@ def isicell_run_simulate(
     measurements = result.get("measurements")
     if measurements and not measurements.get("ok", True):
         raise IsicellError(f"the simulation failed: {measurements.get('error')}")
+    if not result["ok"] and not measurements:
+        # The script died before printing anything, so there is no structured
+        # error to report -- only a traceback the caller would have to parse.
+        raise IsicellError(_diagnose_run_failure(result.get("stderr") or ""))
     return {
         "token": use,
         "ok": result["ok"],

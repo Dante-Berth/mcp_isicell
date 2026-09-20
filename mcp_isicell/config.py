@@ -15,6 +15,18 @@ from pathlib import Path
 ENV_ROOT = "ISICELL_ROOT"
 ENV_JOBS = "ISICELL_JOBS_DIR"
 ENV_STATE = "ISICELL_STATE_DIR"
+ENV_PYTHON = "ISICELL_PYTHON"
+
+
+def isicell_python() -> str:
+    """The interpreter that runs generated simulation scripts.
+
+    A build's `_isiCellPy.so` is compiled against one specific interpreter, and
+    the scripts import isicellpy's own dependencies (pandas, tqdm, networkx,
+    plotly, seaborn, ...). The server's own interpreter usually has neither, so
+    this has to be settable apart from however the server was started.
+    """
+    return os.environ.get(ENV_PYTHON) or "python3"
 
 
 def state_directory() -> Path:

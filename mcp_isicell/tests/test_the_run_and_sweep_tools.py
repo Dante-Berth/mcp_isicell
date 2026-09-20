@@ -619,3 +619,28 @@ def test_refining_an_unscored_database_says_what_is_missing(built, tmp_path):
     with pytest.raises(ToolError) as excinfo:
         server.isicell_sweep_refine(db, "rmse", space)
     assert "error" in str(excinfo.value).lower()
+
+
+def test_a_run_whose_script_dies_before_printing_raises_with_guidance(built, monkeypatch):
+    """No measurements at all means a traceback, which the caller must not have to parse."""
+    (built / "simulations" / "sim_ok" / "isicell" / "__init__.py").write_text(
+        "raise ModuleNotFoundError(\"No module named 'pandas'\")"
+    )
+    with pytest.raises(ToolError) as caught:
+        server.isicell_run_simulate(
+            params={"input": {"Cell": {"Common": {}}, "Scenario": {}}}, steps=[0]
+        )
+    message = str(caught.value)
+    assert "'pandas'" in message
+    assert "ISICELL_PYTHON" in message
+
+
+def test_a_run_interpreter_that_does_not_exist_says_so(built, monkeypatch):
+    """A bare FileNotFoundError reaches the client as "Error executing tool"."""
+    monkeypatch.setenv("ISICELL_PYTHON", str(built / "no" / "such" / "python"))
+    with pytest.raises(ToolError) as caught:
+        server.isicell_run_simulate(
+            params={"input": {"Cell": {"Common": {}}, "Scenario": {}}}, steps=[0]
+        )
+    assert "does not exist" in str(caught.value)
+    assert "ISICELL_PYTHON" in str(caught.value)
