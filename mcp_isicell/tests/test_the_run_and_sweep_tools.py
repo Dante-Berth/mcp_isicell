@@ -548,3 +548,74 @@ def test_a_background_sweep_that_fails_reads_as_failed(built, tmp_path, job_dir)
     )
     entry = _await_job(out["job"])
     assert entry["status"] == "failed" and entry["exit_code"] != 0
+
+
+# -- refinement -----------------------------------------------------------
+
+
+def test_refining_a_scored_sweep_narrows_around_its_winner(built, tmp_path):
+    db = str(tmp_path / "ref.db")
+    space = [{"name": "input.Scenario.growth", "kind": "float", "low": 0.0, "high": 10.0}]
+    server.isicell_sweep_run(
+        base_params={"input": {"Cell": {"Common": {}}, "Scenario": {}}},
+        parameters=space,
+        n_samples=4,
+        steps=[0, 10],
+        seed=1,
+        database=db,
+        reference={"0": 10, "10": 20},
+        column="Alive",
+        metrics=["rmse"],
+        confirm=True,
+    )
+    out = server.isicell_sweep_refine(db, "rmse", space, shrink=0.5)
+    narrowed = out["parameters"][0]
+    assert narrowed["high"] - narrowed["low"] == pytest.approx(5.0)
+    assert 0.0 <= narrowed["low"] < narrowed["high"] <= 10.0
+    assert out["centred_on"]["ID_PARAMETER"] is not None
+
+
+def test_refining_runs_nothing_and_says_so(built, tmp_path):
+    db = str(tmp_path / "ref2.db")
+    space = [{"name": "input.Scenario.growth", "kind": "float", "low": 0.0, "high": 10.0}]
+    server.isicell_sweep_run(
+        base_params={"input": {}}, parameters=space, n_samples=2, steps=[0],
+        seed=1, database=db, reference={"0": 10}, column="Alive", confirm=True,
+    )
+    out = server.isicell_sweep_refine(db, "rmse", space)
+    assert "Nothing has run" in out["note"]
+    # The database is unchanged: no second sweep was recorded.
+    assert server.isicell_results_summarize(db)["tables"]["parameters"]["rows"] == 2
+
+
+def test_a_refined_space_can_be_swept_straight_away(built, tmp_path):
+    """The output is a parameters list, so it feeds back in without editing."""
+    db = str(tmp_path / "ref3.db")
+    space = [{"name": "input.Scenario.growth", "kind": "float", "low": 0.0, "high": 10.0}]
+    server.isicell_sweep_run(
+        base_params={"input": {}}, parameters=space, n_samples=3, steps=[0],
+        seed=1, database=db, reference={"0": 10}, column="Alive", confirm=True,
+    )
+    refined = server.isicell_sweep_refine(db, "rmse", space)
+    second = server.isicell_sweep_run(
+        base_params={"input": {}},
+        parameters=refined["parameters"],
+        n_samples=3,
+        steps=[0],
+        seed=2,
+        database=str(tmp_path / "ref3b.db"),
+        confirm=True,
+    )
+    assert second["ran"] is True and second["failed"] == 0
+
+
+def test_refining_an_unscored_database_says_what_is_missing(built, tmp_path):
+    db = str(tmp_path / "plain.db")
+    space = [{"name": "input.Scenario.growth", "kind": "float", "low": 0.0, "high": 10.0}]
+    server.isicell_sweep_run(
+        base_params={"input": {}}, parameters=space, n_samples=2, steps=[0],
+        seed=1, database=db, confirm=True,
+    )
+    with pytest.raises(ToolError) as excinfo:
+        server.isicell_sweep_refine(db, "rmse", space)
+    assert "error" in str(excinfo.value).lower()

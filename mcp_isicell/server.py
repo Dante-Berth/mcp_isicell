@@ -32,6 +32,7 @@ from .domain.validation import validate
 from .errors import IsicellError, NotConfigured, ValidationRefused
 from .explore.design import plan
 from .explore.metrics import describe_metrics, score
+from .explore.refine import refine
 from .explore.sampling import Parameter
 from .results.reader import ResultsDatabase
 from .results.writer import ResultsWriter, measurement_rows
@@ -748,6 +749,74 @@ def _start_background_sweep(**kwargs: Any) -> dict[str, Any]:
         "note": "Started. Poll with isicell_job_status, read isicell_job_log, "
         "and query the database once it finishes.",
     }
+
+
+@mcp.tool()
+@_tool
+def isicell_sweep_refine(
+    database: str,
+    error_name: str,
+    parameters: list[dict[str, Any]],
+    shrink: float = 0.5,
+) -> dict[str, Any]:
+    """Narrow a parameter space around the best point a scored sweep found.
+
+    Reads the winner from `database`, then returns a `parameters` list centred
+    on it and `shrink` times as wide, ready to pass straight to
+    isicell_sweep_run. It runs nothing: spending another sweep stays your
+    decision.
+
+    Pass the same `parameters` the original sweep used. Categorical axes are
+    left alone -- there is no neighbourhood to narrow into -- and every box is
+    kept inside the original bounds.
+    """
+    space = [Parameter.from_dict(p) for p in parameters]
+    with ResultsDatabase(database) as db:
+        best = db.best(error_name, n=1)
+        if not best:
+            raise IsicellError(
+                f"no scored runs in {database}: sweep with a reference and metrics first."
+            )
+        winner_id = int(best[0]["ID_PARAMETER"])
+        winning_params = db.parameters_for(winner_id)
+
+    # Parameters are stored nested; the axes are named by dotted path.
+    flat = _flatten_for_lookup(winning_params)
+    narrowed, notes = refine(space, flat, shrink=shrink)
+    return {
+        "parameters": [_parameter_to_dict(p) for p in narrowed],
+        "centred_on": {"ID_PARAMETER": winner_id, "score": best[0].get("score")},
+        "winning_values": {n["name"]: n.get("centre") for n in notes if n.get("narrowed")},
+        "notes": notes,
+        "shrink": shrink,
+        "note": "Nothing has run. Pass `parameters` to isicell_sweep_run to explore this box.",
+    }
+
+
+def _flatten_for_lookup(nested: dict[str, Any], prefix: str = "") -> dict[str, Any]:
+    """Nested parameters back to the dotted names the axes carry."""
+    out: dict[str, Any] = {}
+    for key, value in nested.items():
+        path = f"{prefix}.{key}" if prefix else str(key)
+        if isinstance(value, dict):
+            out.update(_flatten_for_lookup(value, path))
+        else:
+            out[path] = value
+    return out
+
+
+def _parameter_to_dict(p: Parameter) -> dict[str, Any]:
+    out: dict[str, Any] = {"name": p.name, "kind": p.kind}
+    if p.kind == "categorical":
+        out["choices"] = list(p.choices)
+    else:
+        out["low"] = p.low
+        out["high"] = p.high
+        if p.log:
+            out["log"] = True
+        if p.step:
+            out["step"] = p.step
+    return out
 
 
 # --------------------------------------------------------------------------
