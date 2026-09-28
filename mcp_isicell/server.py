@@ -361,6 +361,18 @@ def isicell_model_set_scenario_code(init: str | None = None, loop: str | None = 
 
 @mcp.tool()
 @_tool
+def isicell_model_set_cell_init_code(code: str) -> dict[str, Any]:
+    """Set the C++ run once at a cell's birth, before its first transition.
+
+    The place to give a newborn cell its starting values. Without it every
+    attribute begins at whatever the generated member holds, which compiles and
+    runs and is simply wrong.
+    """
+    return _apply(mut.set_cell_init_code(SESSION.model, code))
+
+
+@mcp.tool()
+@_tool
 def isicell_model_set_cell_types(types: list[str]) -> dict[str, Any]:
     """Declare the cell types. Empty means a single implicit 'Common' type."""
     return _apply(mut.set_cell_types(SESSION.model, types))

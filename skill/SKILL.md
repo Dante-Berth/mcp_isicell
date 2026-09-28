@@ -111,6 +111,19 @@ declared in this scope`; `E_SCENARIO_POINTER` catches it offline.
 A model with no `codeInit` creates no cells, and every run measures zero — valid,
 compiles, and tells you nothing.
 
+The cell's counterpart is `isicell_model_set_cell_init_code`, which writes
+`cell.initializationCode` — C++ run once at a cell's birth, before it takes its
+first transition, with the scope already the cell:
+
+```cpp
+polarisation = 0.0;
+life = lifespanMean;   // a parameter, so each cell type gets its own
+```
+
+Set it whenever an attribute needs a starting value. Skip it and every attribute
+begins at whatever the generated member happens to hold: the model compiles, the
+run completes, and the numbers are wrong with nothing to point at.
+
 ## 4c. Write function bodies over several lines
 
 Codegen marks where each function landed with

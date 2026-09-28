@@ -19,7 +19,7 @@ Working notes, not a spec. Delete entries as they are done.
 | M10 parallel | `workers` fans a sweep out across processes | done |
 | M11 optuna | archived studies, trials and fitness read as data | done |
 
-45 tools, 320 tests that need no ISiCell, plus 17 integration tests that do
+46 tools, 342 tests that need no ISiCell, plus 17 integration tests that do
 (`ISICELL_ROOT=... uv run pytest -m integration`) and one skipped unless Optuna is
 installed.
 `uv run pytest && uv run ruff check .`

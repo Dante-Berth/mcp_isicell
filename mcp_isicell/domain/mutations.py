@@ -135,6 +135,19 @@ def set_scenario_code(
     return out
 
 
+def set_cell_init_code(model: BuilderData, code: str) -> BuilderData:
+    """C++ run once at a cell's birth, before it takes its first transition.
+
+    The counterpart of set_scenario_code for the cell. Without it a model
+    authored through the tools alone has no way to give a newborn cell a value,
+    so every attribute starts at whatever the generated member happens to hold
+    -- which is a silent wrong answer, not a build failure.
+    """
+    out = _copy(model)
+    out.cell.initializationCode = code
+    return out
+
+
 def set_cell_types(model: BuilderData, types: list[str]) -> BuilderData:
     out = _copy(model)
     out.cellTypes = list(types)
