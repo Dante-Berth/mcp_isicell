@@ -396,6 +396,7 @@ narrows to a single value, which would leave the next sweep nothing to compare.
 | `E_BAD_IDENTIFIER` | name is not a valid C++ identifier |
 | `E_RECORDED_ATTR_TYPE` | recorded attribute type has no SQL mapping |
 | `E_SCENARIO_POINTER` | scenario init/loop code calls through `s->` |
+| `E_HTML_ENTITY_IN_CODE` | C++ still carries `&lt;`, `&amp;`, `&#60;` — reaches g++ unchanged |
 | `W_FUNC_SINGLE_LINE` | function, `codeInit` or `codeLoop` on one line — build errors cannot name it |
 | `W_UNREACHABLE_STATE` | not reachable from `CellInstantiation` |
 | `W_DEAD_END_STATE` | no way out, and not `DeadCell` |

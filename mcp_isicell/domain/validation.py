@@ -52,6 +52,7 @@ def validate(
     findings += _check_recorded(model)
     findings += _check_cell_types(model)
     findings += _check_scenario_code(model)
+    findings += _check_escaped_code(model)
     findings += _check_modules(model, catalogue, installed_modules)
     findings += _check_graph(model)
     return ValidationReport(findings)
@@ -308,6 +309,78 @@ def _check_scenario_code(model: BuilderData) -> list[Finding]:
                     "`s->createCell();`.",
                 )
             )
+    return out
+
+
+# An XML/HTML character entity. These reach a model by being copied out of a
+# rendered page or by surviving an escaped tool call, and codegen splices them
+# into generated C++ verbatim -- conditions into the switch buildConditionsCode
+# emits (PrimoCell.hpp:15-39), bodies into PrimoCell.hpp, scenario code into
+# Scenario.hpp:168,179. g++ then fails against a file the author never wrote.
+#
+# `a &lt;` is, strictly, parseable as `a & lt;` if `lt` is a variable, so this
+# has a theoretical false positive. No carve-out is made for it: a model with a
+# variable named lt, gt, amp or quot bit-anded without a space is not something
+# anyone has, and adding the space fixes both the reading and this finding.
+HTML_ENTITY = re.compile(r"&(?:lt|gt|amp|quot|apos|nbsp|#\d+|#x[0-9A-Fa-f]+);")
+
+
+def _emitted_cpp(model: BuilderData) -> list[tuple[str, str]]:
+    """Every block of C++ this model contributes to generated source, with its path.
+
+    One list rather than a walk per rule, because a rule about what C++ may
+    contain has to see all of it: a check covering state code but not transition
+    conditions would have passed the model that motivated this one.
+    """
+    blocks: list[tuple[str, str]] = [
+        ("cell.initializationCode", model.cell.initializationCode),
+        ("scenario.codeInit", model.scenario.codeInit),
+        ("scenario.codeLoop", model.scenario.codeLoop),
+    ]
+    for state in model.cell.States:
+        blocks.append((f"cell.States[{state.name}].code", state.code))
+    for label, transitions in (
+        ("cell.Transitions", model.cell.Transitions),
+        ("cell.initializationTransitions", model.cell.initializationTransitions),
+    ):
+        for transition in transitions:
+            for destination in transition.destinations:
+                blocks.append(
+                    (
+                        f"{label}[{transition.from_} -> {destination.to}].condition",
+                        destination.condition,
+                    )
+                )
+    for label, functions in (
+        ("cell.functions", model.cell.functions),
+        ("scenario.functions", model.scenario.functions),
+    ):
+        for key, fn in functions.items():
+            blocks.append((f"{label}.{key}", fn.code))
+    return [(label, code) for label, code in blocks if code]
+
+
+def _check_escaped_code(model: BuilderData) -> list[Finding]:
+    """C++ carrying XML entities cannot reach the compiler intact."""
+    out: list[Finding] = []
+    for label, code in _emitted_cpp(model):
+        found = sorted(set(HTML_ENTITY.findall(code)))
+        if not found:
+            continue
+        out.append(
+            Finding(
+                "error",
+                "E_HTML_ENTITY_IN_CODE",
+                label,
+                f"This C++ contains the XML entity {', '.join(found)}. Codegen splices "
+                "model code into generated source verbatim (PrimoCell.hpp:15-39 for "
+                "conditions, Scenario.hpp:168,179 for scenario code), so the entity "
+                "reaches g++ unchanged and is not valid C++ there. The build fails "
+                "against a generated file, which does not name this block.",
+                "Write the character itself: `<` for &lt;, `>` for &gt;, `&` for &amp;. "
+                "Entities usually arrive by copying code out of a rendered page.",
+            )
+        )
     return out
 
 
