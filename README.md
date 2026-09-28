@@ -239,4 +239,6 @@ lives in `backend/`, `results/` and `config.py`. See `skill/SKILL.md` for the mo
 
 ## Licence
 
-LGPL-3.0-or-later, matching ISiCell.
+LGPL-3.0-or-later, matching ISiCell. The licence is two documents, as the FSF
+distributes it: `COPYING` is the GPL-3.0 text, and `COPYING.LESSER` is the set of
+additional permissions that turns it into the LGPL. Neither stands alone.

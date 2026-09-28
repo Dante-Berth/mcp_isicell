@@ -28,6 +28,13 @@ dev = [
     "ruff>=0.6",
 ]
 
+# Stated rather than left to setuptools' default globs, because LGPL-3.0 is two
+# documents: COPYING.LESSER grants the additional permissions and is meaningless
+# without the GPL-3.0 text in COPYING that it supplements. A build that shipped
+# only one of them would distribute an incomplete licence.
+[tool.setuptools]
+license-files = ["COPYING", "COPYING.LESSER"]
+
 [tool.setuptools.packages.find]
 include = ["mcp_isicell*"]
 
