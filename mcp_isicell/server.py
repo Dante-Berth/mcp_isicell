@@ -72,6 +72,14 @@ def _tool(fn):
             return fn(*args, **kwargs)
         except IsicellError as exc:
             raise ToolError(str(exc)) from exc
+        except OSError as exc:
+            # A path the caller supplied that the filesystem refused: a missing
+            # directory, no permission, a directory where a file was meant. The
+            # errno message already names both the path and the reason and is
+            # the only part the caller can act on, so it must not be dropped
+            # into a bare "Error executing tool" -- which is exactly what
+            # happened before this clause existed.
+            raise ToolError(str(exc)) from exc
         except (ValueError, KeyError) as exc:
             raise ToolError(str(exc)) from exc
 
